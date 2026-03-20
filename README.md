@@ -103,6 +103,7 @@ Open **http://localhost:5200** in your browser (backend on **http://localhost:49
   - `VITE_API_KEY` — optional; must match server `API_KEY` if you enable it
 - **Backend (AWS)**: run the Express API on **EC2** with **Docker Compose** — see [docs/DEPLOY-AWS.md](docs/DEPLOY-AWS.md). The API is **not** deployed as Vercel serverless functions.
 - **GitHub**: initial commit is on branch `main`. Run `gh auth login` then `gh repo create` (see [docs/DEPLOY-GITHUB.md](docs/DEPLOY-GITHUB.md)), or add `origin` and `git push` manually.
+- **Full ordered steps** (auth → Vercel → EC2): [docs/DEPLOY-CHECKLIST.md](docs/DEPLOY-CHECKLIST.md).
 
 Full HTTP reference: [docs/API.md](docs/API.md).
 
