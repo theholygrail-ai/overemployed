@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.vercel
+*.log
+.DS_Store
+Thumbs.db
+
+# Runtime data (persist on EC2 via volume)
+data/*
+!data/.gitkeep

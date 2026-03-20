@@ -1,0 +1,40 @@
+{
+  "name": "overemployed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c cyan,magenta \"vite\" \"node server/index.js\"",
+    "dev:frontend": "vite",
+    "dev:backend": "node --watch server/index.js",
+    "build": "vite build",
+    "setup-aws": "node scripts/setup-aws.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "latest",
+    "@aws-sdk/credential-providers": "latest",
+    "@aws-sdk/lib-dynamodb": "latest",
+    "axios": "latest",
+    "cors": "latest",
+    "docx": "^9.6.1",
+    "dotenv": "latest",
+    "express": "latest",
+    "linkedin-jobs-scraper": "latest",
+    "multer": "^2.1.1",
+    "node-cron": "latest",
+    "openai": "latest",
+    "playwright": "^1.58.2",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-native-web": "latest",
+    "react-router-dom": "latest",
+    "uuid": "latest",
+    "ws": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "vite": "latest",
+    "vite-plugin-react-native-web": "latest"
+  }
+}

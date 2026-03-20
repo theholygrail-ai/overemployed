@@ -1,0 +1,14 @@
+# Run on EC2: copy repo, add .env next to this file, then:
+#   docker compose up -d --build
+#
+# Mount ./data so memory.json, schedule.json, and uploads survive restarts.
+services:
+  api:
+    build: .
+    ports:
+      - "4900:4900"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
