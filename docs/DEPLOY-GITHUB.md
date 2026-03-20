@@ -27,3 +27,7 @@ git push -u origin main
 ```
 
 After the repo exists, connect it in **Vercel** for automatic deploys.
+
+**Windows:** from the repo root you can run `.\scripts\publish-github.ps1` after `gh auth login`.
+
+For the full chain (GitHub → Vercel env → EC2), see [DEPLOY-CHECKLIST.md](./DEPLOY-CHECKLIST.md).
