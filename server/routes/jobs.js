@@ -8,6 +8,7 @@ import {
   getMetrics,
 } from '../services/dynamodb.js';
 import { getMemoryKey } from '../services/memory.js';
+import { getDocxPath, generateDocx } from '../services/docxFormatter.js';
 
 const router = Router();
 
@@ -56,6 +57,25 @@ router.get('/api/jobs/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Application not found' });
     }
     res.json(job);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/api/jobs/:id/cv', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let filePath = await getDocxPath(id);
+
+    if (!filePath) {
+      const job = await getApplication(id);
+      if (!job) return res.status(404).json({ error: 'Application not found' });
+      if (!job.tailoredCV) return res.status(404).json({ error: 'No CV generated for this application' });
+      filePath = await generateDocx(job.tailoredCV, id);
+    }
+
+    const safeTitle = (await getApplication(id))?.roleTitle?.replace(/[^a-zA-Z0-9 -]/g, '') || id;
+    res.download(filePath, `CV - ${safeTitle}.docx`);
   } catch (err) {
     next(err);
   }

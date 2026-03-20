@@ -13,14 +13,27 @@ const client = new OpenAI({
 export async function chatCompletion(messages, options = {}) {
   const { temperature, max_tokens, model } = options;
 
-  const response = await client.chat.completions.create({
-    model: model || DEFAULT_MODEL,
-    messages,
-    ...(temperature !== undefined && { temperature }),
-    ...(max_tokens !== undefined && { max_tokens }),
-  });
-
-  return response.choices[0].message.content;
+  try {
+    const response = await client.chat.completions.create({
+      model: model || DEFAULT_MODEL,
+      messages,
+      ...(temperature !== undefined && { temperature }),
+      ...(max_tokens !== undefined && { max_tokens }),
+    });
+    return response.choices[0].message.content;
+  } catch (err) {
+    if (err.message?.includes('Tool choice is none')) {
+      const response = await client.chat.completions.create({
+        model: model || DEFAULT_MODEL,
+        messages,
+        tool_choice: 'none',
+        ...(temperature !== undefined && { temperature }),
+        ...(max_tokens !== undefined && { max_tokens }),
+      });
+      return response.choices[0].message.content;
+    }
+    throw err;
+  }
 }
 
 export function getClient() {

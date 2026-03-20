@@ -18,7 +18,7 @@
     "axios": "latest",
     "cors": "latest",
     "docx": "^9.6.1",
-    "dotenv": "latest",
+    "dotenv": "^16.4.7",
     "express": "latest",
     "linkedin-jobs-scraper": "latest",
     "multer": "^2.1.1",

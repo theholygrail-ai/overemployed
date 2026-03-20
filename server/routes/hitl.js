@@ -35,7 +35,8 @@ router.get('/api/hitl/:id', async (req, res, next) => {
 
 router.post('/api/hitl/:id/resume', async (req, res, next) => {
   try {
-    await resolveBlocker(req.params.id);
+    const result = resolveBlocker(req.params.id);
+    if (!result) return res.status(404).json({ error: 'Blocker not found' });
     res.json({ resolved: true });
   } catch (err) {
     next(err);
@@ -44,7 +45,8 @@ router.post('/api/hitl/:id/resume', async (req, res, next) => {
 
 router.post('/api/hitl/:id/skip', async (req, res, next) => {
   try {
-    await skipBlocker(req.params.id);
+    const result = skipBlocker(req.params.id);
+    if (!result) return res.status(404).json({ error: 'Blocker not found' });
     res.json({ skipped: true });
   } catch (err) {
     next(err);

@@ -11,3 +11,5 @@ Thumbs.db
 # Runtime data (persist on EC2 via volume)
 data/*
 !data/.gitkeep
+
+.vercel

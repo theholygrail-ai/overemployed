@@ -37,6 +37,7 @@ The Vercel SPA can send the same secret via `VITE_API_KEY` (build-time env) so t
 | GET | `/api/metrics` | Dashboard metrics |
 | GET | `/api/jobs/:id` | Single application |
 | GET | `/api/jobs/status/:status` | Filter by status |
+| GET | `/api/jobs/:id/cv` | Download tailored CV as `.docx` |
 | PATCH | `/api/jobs/:id/status` | Update status JSON `{ status }` |
 | DELETE | `/api/jobs/:id` | Delete application |
 
