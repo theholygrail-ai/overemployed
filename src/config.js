@@ -3,7 +3,7 @@
  * Dev: leave unset — requests use same-origin /api (Vite proxy).
  */
 export function getApiOrigin() {
-  return (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  return (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
 }
 
 /**

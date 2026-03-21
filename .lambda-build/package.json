@@ -1,0 +1,23 @@
+{
+  "name": "overemployed",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "latest",
+    "@aws-sdk/client-lambda": "^3.750.0",
+    "@aws-sdk/client-s3": "^3.750.0",
+    "@aws-sdk/credential-providers": "latest",
+    "@aws-sdk/lib-dynamodb": "latest",
+    "@codegenie/serverless-express": "^4.14.1",
+    "axios": "latest",
+    "cors": "latest",
+    "docx": "^9.6.1",
+    "dotenv": "^16.4.7",
+    "express": "latest",
+    "multer": "^2.1.1",
+    "node-cron": "latest",
+    "openai": "latest",
+    "uuid": "latest",
+    "ws": "latest"
+  }
+}

@@ -18,8 +18,8 @@ export function createAgentRoutes(broadcast) {
       return res.status(409).json({ error: 'An agent run is already in progress' });
     }
 
-    req.setTimeout(600_000);
-    res.setTimeout(600_000);
+    try { req.setTimeout(600_000); } catch {}
+    try { res.setTimeout(600_000); } catch {}
 
     if (shouldUseWorkerLambda()) {
       try {
@@ -106,8 +106,8 @@ export function createAgentRoutes(broadcast) {
       return res.status(409).json({ error: 'An agent run is already in progress' });
     }
 
-    req.setTimeout(600_000);
-    res.setTimeout(600_000);
+    try { req.setTimeout(600_000); } catch {}
+    try { res.setTimeout(600_000); } catch {}
 
     if (shouldUseWorkerLambda()) {
       await setRunState({ running: true });
