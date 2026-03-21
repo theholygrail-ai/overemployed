@@ -9,12 +9,17 @@
     "dev:backend": "node --watch server/index.js",
     "build": "vite build",
     "setup-aws": "node scripts/setup-aws.js",
-    "deploy:vercel": "npx --yes vercel --prod"
+    "deploy:vercel": "npx --yes vercel --prod",
+    "build:aws": "sam build --template-file sam/template.yaml",
+    "deploy:aws": "sam deploy --template-file sam/template.yaml --no-confirm-changeset --capabilities CAPABILITY_IAM --resolve-s3"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "latest",
+    "@aws-sdk/client-lambda": "^3.750.0",
+    "@aws-sdk/client-s3": "^3.750.0",
     "@aws-sdk/credential-providers": "latest",
     "@aws-sdk/lib-dynamodb": "latest",
+    "@codegenie/serverless-express": "^4.14.1",
     "axios": "latest",
     "cors": "latest",
     "docx": "^9.6.1",

@@ -14,13 +14,17 @@ import {
 import { fromIni } from '@aws-sdk/credential-providers';
 import { v4 as uuidv4 } from 'uuid';
 
-const TABLE_NAME = 'TheHolyGrail-Applications';
+const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'TheHolyGrail-Applications';
 const TTL_DAYS = 90;
 
-const client = new DynamoDBClient({
-  region: process.env.AWS_REGION || 'eu-north-1',
-  credentials: fromIni({ profile: process.env.AWS_PROFILE || 'TheHolyGrail' }),
-});
+const clientConfig = {
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'eu-north-1',
+};
+if (process.env.AWS_PROFILE && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  clientConfig.credentials = fromIni({ profile: process.env.AWS_PROFILE });
+}
+
+const client = new DynamoDBClient(clientConfig);
 
 const docClient = DynamoDBDocumentClient.from(client, {
   marshallOptions: { removeUndefinedValues: true },

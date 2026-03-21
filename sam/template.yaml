@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Overemployed serverless API — Lambda Function URL (HTTP) + worker Lambda (orchestrator/apply)
+
+Parameters:
+  DynamoTableName:
+    Type: String
+    Default: TheHolyGrail-Applications
+    Description: Existing DynamoDB table (run npm run setup-aws first)
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  AdzunaAppId:
+    Type: String
+    Default: ''
+  AdzunaAppKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  FrontendOrigins:
+    Type: String
+    Default: '*'
+    Description: Comma-separated origins for CORS (Express). Use your Vercel URL(s).
+  ApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Optional shared secret; set same value as VITE_API_KEY on Vercel
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 3008
+    Environment:
+      Variables:
+        NODE_ENV: production
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+        DYNAMODB_TABLE_NAME: !Ref DynamoTableName
+        GROQ_API_KEY: !Ref GroqApiKey
+        ADZUNA_APP_ID: !Ref AdzunaAppId
+        ADZUNA_APP_KEY: !Ref AdzunaAppKey
+        API_KEY: !Ref ApiKey
+        FRONTEND_URLS: !Ref FrontendOrigins
+        ENABLE_NODE_CRON: 'false'
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  OrchestratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command:
+          - server/worker-lambda.handler
+      Environment:
+        Variables:
+          DATA_S3_BUCKET: !Ref DataBucket
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoTableName
+        - S3CrudPolicy:
+            BucketName: !Ref DataBucket
+    Metadata:
+      Dockerfile: ../Dockerfile.lambda
+      DockerContext: ..
+      DockerTag: worker
+
+  HttpApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageConfig:
+        Command:
+          - server/lambda.handler
+      Environment:
+        Variables:
+          DATA_S3_BUCKET: !Ref DataBucket
+          ORCHESTRATOR_FUNCTION_NAME: !Ref OrchestratorFunction
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoTableName
+        - S3CrudPolicy:
+            BucketName: !Ref DataBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt OrchestratorFunction.Arn
+    Metadata:
+      Dockerfile: ../Dockerfile.lambda
+      DockerContext: ..
+      DockerTag: http-api
+
+  HttpApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt HttpApiFunction.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - '*'
+        AllowHeaders:
+          - '*'
+        AllowCredentials: false
+
+  HttpApiFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref HttpApiFunction
+      Principal: '*'
+      Action: lambda:InvokeFunctionUrl
+      FunctionUrlAuthType: NONE
+
+Outputs:
+  HttpApiUrl:
+    Description: HTTPS base URL for VITE_API_URL (no trailing slash). Example https://xxx.lambda-url.eu-north-1.on.aws
+    Value: !GetAtt HttpApiFunctionUrl.FunctionUrl
+  DataBucketName:
+    Description: S3 bucket for memory.json, schedule, run-state, /tmp fallback data
+    Value: !Ref DataBucket
+  OrchestratorFunctionName:
+    Description: Worker Lambda (pipeline + apply)
+    Value: !Ref OrchestratorFunction

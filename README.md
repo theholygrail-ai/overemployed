@@ -38,6 +38,22 @@ Frontend (React Native Web + Vite)       Backend (Express.js)
 
 ---
 
+## Production: AWS serverless (recommended)
+
+Deploy the API with **AWS SAM** (Lambda container images + **Lambda Function URL**):
+
+1. Create the DynamoDB table: `npm run setup-aws`
+2. Install [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) and Docker.
+3. **Build & deploy:** `npm run build:aws` then `npm run deploy:aws` (or `sam deploy --guided` the first time).
+4. Copy **HttpApiUrl** from CloudFormation outputs → set as **`VITE_API_URL`** on Vercel (no trailing slash).
+5. Set **`VITE_DISABLE_WS=true`** on Vercel (WebSockets are not exposed on Lambda Function URL; the UI polls status).
+
+Full steps: [`docs/DEPLOY-AWS-SERVERLESS.md`](docs/DEPLOY-AWS-SERVERLESS.md).
+
+The **Vercel deployment URL** is shown in your Vercel project after import (e.g. `https://<project>.vercel.app`). It is not fixed in this repo.
+
+---
+
 ## Quick Start
 
 ### Prerequisites

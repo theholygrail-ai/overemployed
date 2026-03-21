@@ -31,6 +31,8 @@ export function getApiHeaders(extra = {}) {
  * Set VITE_WS_URL explicitly (wss://host/ws) or rely on VITE_API_URL (derived wss + /ws).
  */
 export function getWsUrl() {
+  if (import.meta.env.VITE_DISABLE_WS === 'true') return '';
+
   const explicit = import.meta.env.VITE_WS_URL;
   if (explicit) return explicit;
 

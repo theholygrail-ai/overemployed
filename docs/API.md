@@ -1,6 +1,7 @@
 # HTTP API (workflow)
 
-Base URL: your **AWS API** origin (e.g. `https://your-ec2-or-domain.com`).  
+Base URL: your **AWS API** origin — **Lambda Function URL** from SAM (`HttpApiUrl` output), **EC2**, or local dev.  
+Example: `https://xxxx.lambda-url.eu-north-1.on.aws` (no trailing slash).  
 All paths below are prefixed with that origin.
 
 ## Authentication (optional)

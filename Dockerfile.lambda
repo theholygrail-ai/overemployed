@@ -1,0 +1,19 @@
+# AWS Lambda container image — HTTP API + worker (handler set via ImageConfig in SAM)
+FROM public.ecr.aws/lambda/nodejs:20
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY server ./server
+COPY context ./context
+COPY scripts ./scripts
+
+# Browser automation (Playwright + Puppeteer-based scrapers)
+RUN npx playwright install chromium --with-deps || true
+
+ENV NODE_ENV=production
+
+# Overridden per function in sam/template.yaml (server/lambda.handler vs server/worker-lambda.handler)
+CMD ["server/lambda.handler"]

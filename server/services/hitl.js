@@ -2,10 +2,11 @@ import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
 import path from 'path';
+import { dataRoot } from '../lib/dataPath.js';
 
 const emitter = new EventEmitter();
 const blockers = new Map();
-const SCREENSHOT_DIR = path.join(process.cwd(), 'data', 'screenshots');
+const SCREENSHOT_DIR = path.join(dataRoot(), 'screenshots');
 
 let broadcastFn = null;
 

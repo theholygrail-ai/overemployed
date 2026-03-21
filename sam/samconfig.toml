@@ -1,0 +1,16 @@
+# Copy to sam/samconfig.toml and run: sam deploy
+# Or: sam deploy --guided --template-file sam/template.yaml
+
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "overemployed-serverless"
+region = "eu-north-1"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+confirm_changeset = false
+template_file = "sam/template.yaml"
+
+# Example parameter overrides (use your real secrets):
+# parameter_overrides = "GroqApiKey=gsk_xxx AdzunaAppId=xxx AdzunaAppKey=xxx FrontendOrigins=https://your-app.vercel.app ApiKey=your-shared-secret"

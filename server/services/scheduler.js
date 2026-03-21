@@ -1,8 +1,11 @@
 import fs from 'fs/promises';
 import path from 'path';
 import cron from 'node-cron';
+import { dataRoot } from '../lib/dataPath.js';
+import { getJsonKey, putJsonKey, isS3DataEnabled } from './s3Json.js';
 
-const SCHEDULE_PATH = path.join(process.cwd(), 'data', 'schedule.json');
+const SCHEDULE_PATH = path.join(dataRoot(), 'schedule.json');
+const SCHEDULE_KEY = 'schedule.json';
 
 let currentJob = null;
 let currentTaskFn = null;
@@ -10,11 +13,21 @@ let currentCronExpression = null;
 let running = false;
 let lastRun = null;
 
+function nodeCronEnabled() {
+  return process.env.ENABLE_NODE_CRON !== 'false';
+}
+
 async function ensureDir() {
   await fs.mkdir(path.dirname(SCHEDULE_PATH), { recursive: true });
 }
 
 async function loadScheduleConfig() {
+  if (isS3DataEnabled()) {
+    const data = await getJsonKey(SCHEDULE_KEY);
+    return data && typeof data === 'object'
+      ? data
+      : { enabled: false, cronExpression: null, lastRun: null, nextRun: null };
+  }
   try {
     const raw = await fs.readFile(SCHEDULE_PATH, 'utf-8');
     return JSON.parse(raw);
@@ -24,6 +37,10 @@ async function loadScheduleConfig() {
 }
 
 async function saveScheduleConfig(config) {
+  if (isS3DataEnabled()) {
+    await putJsonKey(SCHEDULE_KEY, config);
+    return;
+  }
   await ensureDir();
   await fs.writeFile(SCHEDULE_PATH, JSON.stringify(config, null, 2), 'utf-8');
 }
@@ -50,7 +67,7 @@ export async function setSchedule(cronExpression, enabled) {
     currentJob = null;
   }
 
-  if (enabled && currentTaskFn && cron.validate(cronExpression)) {
+  if (nodeCronEnabled() && enabled && currentTaskFn && cronExpression && cron.validate(cronExpression)) {
     scheduleJob(cronExpression, currentTaskFn);
   }
 }
@@ -77,6 +94,8 @@ function scheduleJob(cronExpression, taskFn) {
 
 export async function startScheduler(taskFn) {
   currentTaskFn = taskFn;
+  if (!nodeCronEnabled()) return;
+
   const config = await loadScheduleConfig();
 
   if (config.enabled && config.cronExpression && cron.validate(config.cronExpression)) {

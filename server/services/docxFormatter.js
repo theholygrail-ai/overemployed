@@ -12,8 +12,9 @@ import {
 } from 'docx';
 import fs from 'fs';
 import path from 'path';
+import { dataRoot } from '../lib/dataPath.js';
 
-const BASE_DIR = path.join(process.cwd(), 'data', 'cvs');
+const BASE_DIR = path.join(dataRoot(), 'cvs');
 
 function ensureDir() {
   if (!fs.existsSync(BASE_DIR)) {

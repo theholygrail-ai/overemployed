@@ -17,6 +17,11 @@ export function useWebSocket() {
     if (unmounted.current) return;
 
     const wsUrl = getWsUrl();
+    if (!wsUrl) {
+      setConnected(false);
+      return;
+    }
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

@@ -2,9 +2,10 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
+import { dataRoot } from '../lib/dataPath.js';
 import { getMemoryKey, setMemoryKey } from '../services/memory.js';
 
-const ARTIFACTS_DIR = path.join(process.cwd(), 'data', 'artifacts');
+const ARTIFACTS_DIR = path.join(dataRoot(), 'artifacts');
 
 async function ensureArtifactsDir() {
   await fs.mkdir(ARTIFACTS_DIR, { recursive: true });
