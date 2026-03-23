@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { apiGet } from '../hooks/useApi';
+import { getWsUrl } from '../config.js';
 import theme from '../theme';
 
 const PIPELINE_STAGES = [
@@ -18,7 +20,9 @@ const STAGE_COLORS = {
 };
 
 export default function AgentMonitor() {
-  const { messages, connected } = useWebSocket();
+  const { messages, connected, wsConnected, usingWebSocket } = useWebSocket();
+  const wsUrl = useMemo(() => getWsUrl(), []);
+  const lastPollKeyRef = useRef('');
   const [stages, setStages] = useState(
     Object.fromEntries(PIPELINE_STAGES.map((s) => [s.key, 'idle']))
   );
@@ -51,6 +55,75 @@ export default function AgentMonitor() {
     }
   }, [log]);
 
+  /** When WebSocket is unavailable, mirror coarse pipeline state from REST. */
+  useEffect(() => {
+    if (wsUrl && wsConnected) return;
+
+    const tick = async () => {
+      try {
+        const data = await apiGet('/agents/status');
+        if (!data) return;
+        const key = `${data.status}-${data.lastRunResult?.error || ''}-${data.lastRunResult?.jobsFound ?? ''}`;
+        if (key === lastPollKeyRef.current) return;
+        lastPollKeyRef.current = key;
+
+        if (data.status === 'running') {
+          setStages((prev) => ({
+            ...prev,
+            orchestrator: prev.orchestrator === 'idle' ? 'running' : prev.orchestrator,
+          }));
+          setLog((prev) => {
+            const line = {
+              type: 'agent_log',
+              message: 'Pipeline / apply in progress (API poll)',
+              _logTs: Date.now(),
+              _fromPoll: true,
+            };
+            const next = [...prev, line];
+            return next.slice(-200);
+          });
+        }
+
+        if (data.status === 'idle' && data.lastRunResult && !data.lastRunResult.error) {
+          setStages((prev) => ({
+            ...prev,
+            orchestrator: 'complete',
+          }));
+          setLog((prev) => {
+            const j = data.lastRunResult.jobsFound ?? 0;
+            const line = {
+              type: 'agent:run_complete',
+              message: `Run finished (API poll) — ${j} jobs found`,
+              result: data.lastRunResult,
+              _logTs: Date.now(),
+              _fromPoll: true,
+            };
+            return [...prev, line].slice(-200);
+          });
+        }
+
+        if (data.status === 'idle' && data.lastRunResult?.error) {
+          setStages((prev) => ({ ...prev, orchestrator: 'error' }));
+          setLog((prev) =>
+            [...prev, {
+              type: 'agent:run_error',
+              error: data.lastRunResult.error,
+              message: String(data.lastRunResult.error),
+              _logTs: Date.now(),
+              _fromPoll: true,
+            }].slice(-200)
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => clearInterval(id);
+  }, [wsUrl, wsConnected]);
+
   const clearLog = () => {
     setLog([]);
     setStages(Object.fromEntries(PIPELINE_STAGES.map((s) => [s.key, 'idle'])));
@@ -63,7 +136,9 @@ export default function AgentMonitor() {
           <Text style={styles.heading}>Agent Monitor</Text>
           <Text style={styles.subheading}>
             Real-time pipeline status
-            {!connected && ' — disconnected'}
+            {usingWebSocket && !wsConnected && ' — WebSocket reconnecting…'}
+            {!usingWebSocket && connected && ' — events via API only (no WebSocket)'}
+            {!connected && ' — API offline'}
           </Text>
         </View>
         <TouchableOpacity style={styles.clearBtn} onPress={clearLog}>
@@ -96,7 +171,9 @@ export default function AgentMonitor() {
         <ScrollView ref={logRef} style={styles.logScroll} contentContainerStyle={styles.logContent}>
           {log.length === 0 ? (
             <Text style={styles.emptyText}>
-              Waiting for agent activity…{!connected ? ' (WebSocket disconnected)' : ''}
+              Waiting for agent activity…
+              {!connected && ' (API unreachable)'}
+              {connected && usingWebSocket && !wsConnected && ' (WebSocket reconnecting — log may be delayed)'}
             </Text>
           ) : (
             log.map((entry, i) => (

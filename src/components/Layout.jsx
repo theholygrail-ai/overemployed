@@ -16,7 +16,13 @@ const NAV_ITEMS = [
 
 export default function Layout({ children }) {
   const location = useLocation();
-  const { connected } = useWebSocket();
+  const { connected, wsConnected } = useWebSocket();
+
+  const statusLabel = !connected
+    ? 'Offline'
+    : wsConnected
+      ? 'Live (real-time)'
+      : 'Live (API)';
 
   return (
     <View style={styles.container}>
@@ -53,9 +59,7 @@ export default function Layout({ children }) {
         <View style={styles.sidebarFooter}>
           <View style={styles.statusRow}>
             <View style={[styles.statusDot, connected ? styles.dotConnected : styles.dotDisconnected]} />
-            <Text style={styles.statusText}>
-              {connected ? 'Connected' : 'Disconnected'}
-            </Text>
+            <Text style={styles.statusText}>{statusLabel}</Text>
           </View>
         </View>
       </View>

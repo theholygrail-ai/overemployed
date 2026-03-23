@@ -19,7 +19,18 @@ async function request(path, options = {}) {
     throw new Error(body || `Request failed: ${res.status}`);
   }
   const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const snippet = text.slice(0, 80).replace(/\s+/g, ' ');
+    const looksHtml = /^\s*</.test(text);
+    throw new Error(
+      looksHtml
+        ? 'API returned HTML instead of JSON — set VITE_API_URL to your backend (Vercel is serving the SPA for /api/*).'
+        : `Invalid JSON from API: ${snippet}${text.length > 80 ? '…' : ''}`
+    );
+  }
 }
 
 export async function apiGet(url) {

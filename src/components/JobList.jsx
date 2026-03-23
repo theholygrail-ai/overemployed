@@ -1,44 +1,112 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
-import { useApi } from '../hooks/useApi';
+import { useNavigate } from 'react-router-dom';
+import { useApi, apiGet } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { formatDate, truncate, statusColor, sourceIcon, formatDateTime } from '../utils/formatters';
-import { apiFetch } from '../config.js';
+import { apiFetch, getWsUrl } from '../config.js';
 import CVViewer from './CVViewer';
+import ApplicationProofModal from './ApplicationProofModal';
 import theme from '../theme';
 
 const STATUS_OPTIONS = ['all', 'found', 'cv_generated', 'reviewed', 'ready', 'applying', 'blocked', 'applied', 'failed', 'rejected'];
+/** Apply finished or needs attention — poll until one of these (from fresh API response, not React state). */
+const APPLY_TERMINAL = ['applied', 'blocked', 'failed', 'rejected'];
+const APPLY_POLL_MS = 4000;
+/** Lambda apply can run many minutes; ~25 min max wait */
+const APPLY_MAX_POLLS = 375;
 const SORT_KEYS = ['roleTitle', 'company', 'source', 'matchScore', 'dateFound', 'status'];
 
 export default function JobList() {
   const api = useApi();
-  const { messages } = useWebSocket();
+  const navigate = useNavigate();
+  const { messages, wsConnected } = useWebSocket();
+  const wsUrl = useMemo(() => getWsUrl(), []);
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('dateFound');
   const [sortAsc, setSortAsc] = useState(false);
   const [cvViewId, setCvViewId] = useState(null);
+  const [proofJob, setProofJob] = useState(null);
   const [applyingId, setApplyingId] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [runInProgress, setRunInProgress] = useState(false);
+  const [applyError, setApplyError] = useState(null);
   const fetchDebounceRef = useRef(null);
+  const pollRef = useRef(null);
+  const runBusyRef = useRef(false);
+  const applyCooldownRef = useRef(0);
 
   const handleApply = async (applicationId) => {
+    const t = Date.now();
+    if (applyingId) return;
+    if (t - applyCooldownRef.current < 1500) return;
+    applyCooldownRef.current = t;
+
+    setApplyError(null);
     setApplyingId(applicationId);
+    setJobs(prev => prev.map(j =>
+      j.applicationId === applicationId ? { ...j, status: 'applying' } : j
+    ));
     try {
-      await apiFetch(`/jobs/${applicationId}/apply`, { method: 'POST' });
+      const res = await apiFetch(`/jobs/${applicationId}/apply`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.text();
+        console.error('Apply failed:', err);
+        setApplyError(err || `Apply failed (${res.status})`);
+        setApplyingId(null);
+        fetchJobs();
+        return;
+      }
+      let pollCount = 0;
+      if (pollRef.current) clearInterval(pollRef.current);
+
+      const pollOnce = async () => {
+        pollCount++;
+        try {
+          const data = await apiGet('/jobs');
+          const list = Array.isArray(data) ? data : data?.jobs || [];
+          setJobs(list);
+          setLastUpdated(new Date().toISOString());
+          const updated = list.find((j) => j.applicationId === applicationId);
+          const done =
+            (updated && APPLY_TERMINAL.includes(updated.status)) || pollCount >= APPLY_MAX_POLLS;
+          if (done) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setApplyingId(null);
+          }
+          return done;
+        } catch (e) {
+          console.error('Apply poll error:', e);
+          if (pollCount >= APPLY_MAX_POLLS) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setApplyingId(null);
+            return true;
+          }
+          return false;
+        }
+      };
+
+      const finishedImmediately = await pollOnce();
+      if (!finishedImmediately) {
+        pollRef.current = setInterval(pollOnce, APPLY_POLL_MS);
+      }
+    } catch (err) {
+      console.error('Apply error:', err);
+      setApplyError(err?.message || 'Apply request failed');
+      setApplyingId(null);
       fetchJobs();
-    } catch {}
-    setApplyingId(null);
+    }
   };
 
   const fetchJobs = useCallback(async () => {
     const data = await api.get('/jobs');
-    if (data) {
-      setJobs(Array.isArray(data) ? data : data.jobs || []);
-      setLastUpdated(new Date().toISOString());
-    }
+    if (data == null) return;
+    setJobs(Array.isArray(data) ? data : data.jobs || []);
+    setLastUpdated(new Date().toISOString());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
@@ -60,7 +128,31 @@ export default function JobList() {
     }
   }, [messages, fetchJobs]);
 
-  useEffect(() => () => clearTimeout(fetchDebounceRef.current), []);
+  /** Without WebSocket, still show "pipeline running" via REST (Lambda / remote API). */
+  useEffect(() => {
+    if (wsUrl && wsConnected) return;
+    const tick = async () => {
+      try {
+        const s = await apiGet('/agents/status');
+        const busy = s?.status === 'running';
+        setRunInProgress(busy);
+        if (runBusyRef.current && !busy) {
+          fetchJobs();
+        }
+        runBusyRef.current = busy;
+      } catch {
+        /* ignore */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => clearInterval(id);
+  }, [wsUrl, wsConnected, fetchJobs]);
+
+  useEffect(() => () => {
+    clearTimeout(fetchDebounceRef.current);
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
 
   const handleSort = (key) => {
     if (!SORT_KEYS.includes(key)) return;
@@ -110,6 +202,26 @@ export default function JobList() {
         )}
       </View>
 
+      {api.error && (
+        <View style={[styles.banner, styles.bannerError]}>
+          <Text style={styles.bannerText}>
+            Could not load jobs: {api.error}
+          </Text>
+          <TouchableOpacity style={styles.bannerBtn} onPress={() => { fetchJobs(); }}>
+            <Text style={styles.bannerBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {applyError && (
+        <View style={[styles.banner, styles.bannerError]}>
+          <Text style={styles.bannerText}>Apply failed: {applyError}</Text>
+          <TouchableOpacity style={styles.bannerBtn} onPress={() => setApplyError(null)}>
+            <Text style={styles.bannerBtnText}>Dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {runInProgress && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>Pipeline running — new jobs will appear when scraping completes.</Text>
@@ -142,6 +254,13 @@ export default function JobList() {
         />
       </View>
 
+      {filter === 'applied' && (
+        <Text style={styles.filterHint}>
+          Showing applied jobs only. Use <Text style={styles.filterHintBold}>Application</Text> on a row to open
+          automation screenshots and verify the submission.
+        </Text>
+      )}
+
       {api.loading && jobs.length === 0 ? (
         <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 40 }} />
       ) : filtered.length === 0 ? (
@@ -149,7 +268,9 @@ export default function JobList() {
           <Text style={styles.emptyIcon}>◻</Text>
           <Text style={styles.emptyText}>No jobs found</Text>
           <Text style={styles.emptySubtext}>
-            {jobs.length === 0 ? 'Run the agent pipeline to discover jobs' : 'Try adjusting your filters'}
+            {jobs.length === 0
+              ? 'Run the pipeline — listings appear after CV review passes the quality threshold. If loading failed, check the banner above (Vercel needs VITE_API_URL pointing at your API).'
+              : 'Try adjusting your filters'}
           </Text>
         </View>
       ) : (
@@ -158,12 +279,12 @@ export default function JobList() {
             <View style={styles.tableHeader}>
               {[
                 { key: 'status', label: 'Status', width: 110 },
-                { key: 'title', label: 'Title', width: 250 },
+                { key: 'roleTitle', label: 'Title', width: 250 },
                 { key: 'company', label: 'Company', width: 160 },
                 { key: 'source', label: 'Source', width: 100 },
                 { key: 'matchScore', label: 'Match', width: 80 },
                 { key: 'dateFound', label: 'Date Found', width: 120 },
-                { key: null, label: 'Actions', width: 300 },
+                { key: null, label: 'Actions', width: 400 },
               ].map((col) => (
                 <TouchableOpacity
                   key={col.label}
@@ -206,8 +327,8 @@ export default function JobList() {
                   <View style={[styles.td, { width: 120 }]}>
                     <Text style={styles.tdTextMuted}>{formatDate(job.dateFound)}</Text>
                   </View>
-                  <View style={[styles.td, styles.actionsCell, { width: 300 }]}>
-                    {job.status === 'ready' && (
+                  <View style={[styles.td, styles.actionsCell, { width: 400 }]}>
+                    {['ready', 'reviewed', 'cv_generated'].includes(job.status) && (
                       <TouchableOpacity
                         style={[styles.actionBtn, { backgroundColor: theme.colors.primary + '33', borderColor: theme.colors.primary, borderWidth: 1 }]}
                         onPress={() => handleApply(job.applicationId)}
@@ -226,15 +347,36 @@ export default function JobList() {
                     {job.status === 'blocked' && (
                       <TouchableOpacity
                         style={[styles.actionBtn, { backgroundColor: theme.colors.error + '22', borderColor: theme.colors.error, borderWidth: 1 }]}
-                        onPress={() => window.location.href = '/interventions'}
+                        onPress={async () => {
+                          try {
+                            const res = await apiFetch('/hitl/all');
+                            if (res.ok) {
+                              const blockers = await res.json();
+                              const match = blockers.find(b => b.applicationId === job.applicationId);
+                              if (match) {
+                                navigate(`/interventions/${match.id}`);
+                                return;
+                              }
+                            }
+                          } catch { /* fall through */ }
+                          navigate('/interventions');
+                        }}
                       >
                         <Text style={[styles.actionText, { color: theme.colors.error }]}>Action Required</Text>
                       </TouchableOpacity>
                     )}
                     {job.status === 'applied' && (
-                      <View style={[styles.actionBtn, { backgroundColor: theme.colors.success + '22' }]}>
-                        <Text style={[styles.actionText, { color: theme.colors.success }]}>✓ Applied</Text>
-                      </View>
+                      <>
+                        <View style={[styles.actionBtn, { backgroundColor: theme.colors.success + '22' }]}>
+                          <Text style={[styles.actionText, { color: theme.colors.success }]}>✓ Applied</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, { backgroundColor: theme.colors.primary + '18', borderWidth: 1, borderColor: theme.colors.primary + '55' }]}
+                          onPress={() => setProofJob(job)}
+                        >
+                          <Text style={[styles.actionText, { color: theme.colors.primary }]}>Application</Text>
+                        </TouchableOpacity>
+                      </>
                     )}
                     <TouchableOpacity style={styles.actionBtn} onPress={() => setCvViewId(job.applicationId)}>
                       <Text style={styles.actionText}>View CV</Text>
@@ -271,6 +413,14 @@ export default function JobList() {
       )}
 
       {cvViewId && <CVViewer applicationId={cvViewId} onClose={() => setCvViewId(null)} />}
+      {proofJob && (
+        <ApplicationProofModal
+          applicationId={proofJob.applicationId}
+          roleTitle={proofJob.roleTitle}
+          company={proofJob.company}
+          onClose={() => setProofJob(null)}
+        />
+      )}
     </View>
   );
 }
@@ -306,6 +456,10 @@ const styles = StyleSheet.create({
     padding: theme.spacing.sm + 2,
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.md,
+  },
+  bannerError: {
+    backgroundColor: theme.colors.error + '15',
+    borderColor: theme.colors.error + '44',
   },
   bannerText: { fontSize: theme.fonts.sm, color: theme.colors.text, flex: 1 },
   bannerBtn: {
@@ -347,6 +501,17 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: theme.colors.primary,
     fontWeight: '600',
+  },
+  filterHint: {
+    fontSize: theme.fonts.sm,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.spacing.md,
+    maxWidth: 720,
+    lineHeight: 20,
+  },
+  filterHintBold: {
+    fontWeight: '700',
+    color: theme.colors.text,
   },
   searchInput: {
     backgroundColor: theme.colors.surface,

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigate } from 'react-router-dom';
-import { useApi } from '../hooks/useApi';
+import { useApi, apiGet } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { getWsUrl } from '../config.js';
 import { timeAgo, formatDateTime } from '../utils/formatters';
 import MetricCard from './MetricCard';
 import theme from '../theme';
@@ -12,7 +13,9 @@ const RUN_SAFETY_MS = 15 * 60 * 1000;
 export default function Dashboard() {
   const api = useApi();
   const navigate = useNavigate();
-  const { messages, connected } = useWebSocket();
+  const { messages, connected, wsConnected } = useWebSocket();
+  const wsUrl = useMemo(() => getWsUrl(), []);
+  const seenServerRunningRef = useRef(false);
   const [metrics, setMetrics] = useState(null);
   const [history, setHistory] = useState([]);
   const [schedule, setSchedule] = useState(null);
@@ -21,6 +24,7 @@ export default function Dashboard() {
   const [runError, setRunError] = useState(null);
   const [linkedInStatus, setLinkedInStatus] = useState(null);
   const safetyTimerRef = useRef(null);
+  const runCooldownRef = useRef(0);
 
   const clearSafetyTimer = useCallback(() => {
     if (safetyTimerRef.current) {
@@ -41,8 +45,14 @@ export default function Dashboard() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRunNow = async () => {
+    const t = Date.now();
+    if (running) return;
+    if (t - runCooldownRef.current < 2000) return;
+    runCooldownRef.current = t;
+
     setRunError(null);
     setLastResult(null);
+    seenServerRunningRef.current = false;
     setRunning(true);
     clearSafetyTimer();
     safetyTimerRef.current = setTimeout(() => {
@@ -78,6 +88,50 @@ export default function Dashboard() {
       refreshMetrics();
     }
   }, [messages, clearSafetyTimer, refreshMetrics]);
+
+  /** When WebSocket is off (remote Lambda) or disconnected, poll run completion from REST. */
+  useEffect(() => {
+    if (!running) return;
+    const needsPoll = !wsUrl || !wsConnected;
+    if (!needsPoll) return;
+
+    const tick = async () => {
+      try {
+        const data = await apiGet('/agents/status');
+        if (!data) return;
+        if (data.status === 'running') {
+          seenServerRunningRef.current = true;
+        }
+        if (data.status !== 'idle' || data.lastRunResult == null) return;
+
+        const err = data.lastRunResult?.error;
+        const canFinish =
+          seenServerRunningRef.current ||
+          Boolean(err) ||
+          data.lastRunResult?.jobsFound !== undefined;
+        if (!canFinish) return;
+
+        clearSafetyTimer();
+        if (err) {
+          setRunning(false);
+          setRunError(typeof err === 'string' ? err : 'Pipeline failed');
+          setLastResult(null);
+        } else {
+          setRunning(false);
+          setLastResult(data.lastRunResult);
+          setRunError(null);
+        }
+        refreshMetrics();
+        api.get('/auth/linkedin/status').then((d) => d && setLinkedInStatus(d));
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const id = setInterval(tick, 3000);
+    tick();
+    return () => clearInterval(id);
+  }, [running, wsUrl, wsConnected, clearSafetyTimer, refreshMetrics]);
 
   useEffect(() => () => clearSafetyTimer(), [clearSafetyTimer]);
 
@@ -242,7 +296,7 @@ export default function Dashboard() {
           <Text style={styles.sectionTitle}>Live Activity</Text>
           <View style={styles.feed}>
             {recentActivity.length === 0 ? (
-              <Text style={styles.emptyText}>No recent activity{connected ? '' : ' — disconnected'}</Text>
+              <Text style={styles.emptyText}>No recent activity{connected ? '' : ' — API offline'}</Text>
             ) : (
               recentActivity.map((msg, i) => (
                 <View key={(msg._ts || '') + '-' + i} style={styles.feedItem}>
