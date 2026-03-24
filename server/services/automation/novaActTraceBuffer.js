@@ -2,10 +2,32 @@
  * In-memory Nova Act trace lines per application (Playground-style log in the UI).
  * Cleared when apply completes or after TTL.
  */
+import { clearNovaActLiveFrame } from './novaActLiveFrame.js';
 const traces = new Map();
 const meta = new Map();
+const taskPreview = new Map();
 const TTL_MS = 45 * 60 * 1000;
 const MAX_LINES = 400;
+
+/** Full task text sent to CreateAct (read-only in UI; AWS UpdateAct cannot change task body). */
+export function setNovaActTaskPreview(applicationId, text) {
+  if (!applicationId) return;
+  taskPreview.set(String(applicationId), { text: String(text || ''), updatedAt: Date.now() });
+}
+
+export function getNovaActTaskPreview(applicationId) {
+  const row = taskPreview.get(String(applicationId));
+  if (!row) return null;
+  if (Date.now() - row.updatedAt > TTL_MS) {
+    taskPreview.delete(String(applicationId));
+    return null;
+  }
+  return row.text;
+}
+
+function clearTaskPreview(applicationId) {
+  taskPreview.delete(String(applicationId));
+}
 
 export function appendNovaActTrace(applicationId, line) {
   if (!applicationId || !line) return;
@@ -45,9 +67,11 @@ export function getNovaActTraceLines(applicationId) {
 export function clearNovaActTrace(applicationId) {
   traces.delete(String(applicationId));
   meta.delete(String(applicationId));
+  clearTaskPreview(applicationId);
 }
 
 /** Call when starting a new apply so stale trace/meta do not leak between runs. */
 export function resetNovaActApplyBuffer(applicationId) {
+  clearNovaActLiveFrame(applicationId);
   clearNovaActTrace(applicationId);
 }

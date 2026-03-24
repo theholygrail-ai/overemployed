@@ -7,6 +7,7 @@ import { formatDate, truncate, statusColor, sourceIcon, formatDateTime } from '.
 import { apiFetch, getWsUrl } from '../config.js';
 import CVViewer from './CVViewer';
 import ApplicationProofModal from './ApplicationProofModal';
+import NovaActPlaygroundPanel from './NovaActPlaygroundPanel.jsx';
 import theme from '../theme';
 
 const STATUS_OPTIONS = ['all', 'found', 'cv_generated', 'reviewed', 'ready', 'applying', 'blocked', 'applied', 'failed', 'rejected'];
@@ -313,6 +314,13 @@ export default function JobList() {
             <Text style={styles.bannerBtnText}>Refresh now</Text>
           </TouchableOpacity>
         </View>
+      )}
+
+      {applyingId && (
+        <NovaActPlaygroundPanel
+          applicationId={applyingId}
+          jobPostingUrl={jobs.find((j) => j.applicationId === applyingId)?.jobLink || ''}
+        />
       )}
 
       <View style={styles.filterBar}>

@@ -23,7 +23,13 @@ import { getApplyProofBuffer, getApplyProofMeta } from '../services/applyProof.j
 import { getMemoryKey } from '../services/memory.js';
 import { getDocxPath, generateDocx } from '../services/docxFormatter.js';
 import { getPdfPath, generatePdf } from '../services/cvPdf.js';
-import { getNovaActTraceLines, getNovaActRunMeta } from '../services/automation/novaActTraceBuffer.js';
+import {
+  getNovaActTraceLines,
+  getNovaActRunMeta,
+  getNovaActTaskPreview,
+  appendNovaActTrace,
+} from '../services/automation/novaActTraceBuffer.js';
+import { getNovaActLiveFrame, attachMjpegClient } from '../services/automation/novaActLiveFrame.js';
 
 const router = Router();
 
@@ -125,6 +131,62 @@ router.get('/api/jobs/:id/nova-act/run-meta', async (req, res, next) => {
     const meta = getNovaActRunMeta(req.params.id);
     if (!meta) return res.status(404).json({ error: 'No active Nova Act run metadata' });
     res.json(meta);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Latest single frame (PNG fallback or JPEG from CDP screencast). Poll when MJPEG stream is unavailable. */
+router.get('/api/jobs/:id/nova-act/live-frame', async (req, res) => {
+  const row = getNovaActLiveFrame(req.params.id);
+  if (!row?.buffer?.length) return res.status(204).end();
+  const ct = row.mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+  res.set('Content-Type', ct);
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.send(row.buffer);
+});
+
+/**
+ * Multipart MJPEG over one HTTP connection (smooth “video” like Playground).
+ * Prefer hitting the API host directly (EC2); many serverless proxies buffer long streams.
+ */
+router.get('/api/jobs/:id/nova-act/live-stream', (req, res) => {
+  const { id } = req.params;
+  const detach = attachMjpegClient(id, res);
+  req.on('close', detach);
+});
+
+router.get('/api/jobs/:id/nova-act/live-meta', async (req, res) => {
+  const row = getNovaActLiveFrame(req.params.id);
+  res.json({
+    hasFrame: Boolean(row?.buffer?.length),
+    pageUrl: row?.pageUrl || '',
+    updatedAt: row?.updatedAt || null,
+    mimeType: row?.mimeType || null,
+  });
+});
+
+router.get('/api/jobs/:id/nova-act/task-preview', async (req, res) => {
+  const text = getNovaActTaskPreview(req.params.id);
+  if (text == null) {
+    return res.status(404).json({ error: 'No task preview (apply may not have started yet)' });
+  }
+  res.json({ applicationId: req.params.id, text });
+});
+
+/** Appends a line to the in-memory trace (operator context). Does not change the Nova Act task in AWS. */
+router.post('/api/jobs/:id/nova-act/operator-note', async (req, res, next) => {
+  try {
+    const note = String(req.body?.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'note is required' });
+    const job = await getApplication(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Application not found' });
+    if (!['applying', 'blocked'].includes(job.status)) {
+      return res.status(409).json({ error: 'Operator notes are only allowed while applying or blocked' });
+    }
+    appendNovaActTrace(req.params.id, `📋 Operator note: ${note.slice(0, 2000)}`);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

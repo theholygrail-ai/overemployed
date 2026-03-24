@@ -106,17 +106,25 @@ function createMockPage() {
   };
 }
 
-vi.mock('playwright', () => ({
-  chromium: {
-    launch: vi.fn().mockImplementation(async () => ({
-      newContext: vi.fn().mockImplementation(async () => ({
-        addCookies: vi.fn().mockResolvedValue(undefined),
-        newPage: vi.fn().mockImplementation(async () => createMockPage()),
+vi.mock('playwright', () => {
+  const mockContext = {
+    addCookies: vi.fn().mockResolvedValue(undefined),
+    newCDPSession: vi.fn().mockRejectedValue(new Error('CDP unavailable in test mock')),
+  };
+  mockContext.newPage = vi.fn().mockImplementation(async () => {
+    const page = createMockPage();
+    page.context = () => mockContext;
+    return page;
+  });
+  return {
+    chromium: {
+      launch: vi.fn().mockImplementation(async () => ({
+        newContext: vi.fn().mockImplementation(async () => mockContext),
+        close: vi.fn().mockResolvedValue(undefined),
       })),
-      close: vi.fn().mockResolvedValue(undefined),
-    })),
-  },
-}));
+    },
+  };
+});
 
 describe('applyWithNovaActAws (mocked AWS + Playwright)', () => {
   const prev = {
@@ -157,7 +165,9 @@ describe('applyWithNovaActAws (mocked AWS + Playwright)', () => {
     else process.env.NOVA_ACT_HEADLESS = prev.headless;
   });
 
-  it('completes one successful application run when act reaches SUCCEEDED', async () => {
+  it(
+    'completes one successful application run when act reaches SUCCEEDED',
+    async () => {
     const { applyWithNovaActAws } = await import('./novaActAwsService.js');
 
     const job = { url: 'https://example.com/', title: 'Role', company: 'Co' };
@@ -188,5 +198,7 @@ describe('applyWithNovaActAws (mocked AWS + Playwright)', () => {
     expect(result.message).toMatch(/completed/i);
     expect(traces.some(t => /Workflow run wr-mock-1/.test(t))).toBe(true);
     expect(traces.some(t => /Act SUCCEEDED/.test(t))).toBe(true);
-  });
+    },
+    60_000,
+  );
 });

@@ -24,7 +24,9 @@ import {
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { isS3DataEnabled, putBinaryKey } from '../s3Json.js';
-import { appendNovaActTrace, setNovaActRunMeta } from './novaActTraceBuffer.js';
+import { appendNovaActTrace, setNovaActRunMeta, setNovaActTaskPreview } from './novaActTraceBuffer.js';
+import { setNovaActLiveFrame } from './novaActLiveFrame.js';
+import { startNovaActScreencast } from './novaActScreencast.js';
 import {
   buildInitialCallResults,
   executeNovaActCalls,
@@ -36,6 +38,28 @@ export const NOVA_ACT_REGION = 'us-east-1';
 const DEFAULT_TIMEOUT_MS = Number(process.env.NOVA_ACT_TIMEOUT_MS || 25 * 60 * 1000);
 const MAX_INVOKE_STEPS = Number(process.env.NOVA_ACT_MAX_INVOKE_STEPS || 400);
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
+
+const lastLiveFrameAt = new Map();
+async function maybePushLiveFrame(page, applicationId) {
+  if (!page || !applicationId) return;
+  const id = String(applicationId);
+  const now = Date.now();
+  const prev = lastLiveFrameAt.get(id) || 0;
+  if (now - prev < 650) return;
+  lastLiveFrameAt.set(id, now);
+  try {
+    const buf = await page.screenshot({ type: 'png', timeout: 20_000 });
+    let pageUrl = '';
+    try {
+      pageUrl = page.url();
+    } catch {
+      /* ignore */
+    }
+    setNovaActLiveFrame(id, buf, pageUrl);
+  } catch {
+    /* viewport may be busy */
+  }
+}
 
 function trace(options, applicationId, line) {
   if (!line) return;
@@ -198,6 +222,7 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
   let browser;
   let workflowRunId;
   let logGroupName;
+  let stopScreencast = async () => {};
 
   try {
     onLog(`Nova Act AWS — workflow "${workflowDefinitionName}" model ${modelId}`);
@@ -249,6 +274,7 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
     }
 
     const task = buildApplyTask(job, knowledgePack, profile, cvUrl);
+    setNovaActTaskPreview(applicationId, task);
     const actOut = await client.send(
       new CreateActCommand({
         workflowDefinitionName,
@@ -272,7 +298,15 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
     });
     await applyPlaywrightCookies(context, mergedCookies);
     const page = await context.newPage();
-    await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    stopScreencast = await startNovaActScreencast(page, applicationId);
+    try {
+      await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    } catch (e) {
+      await stopScreencast();
+      stopScreencast = async () => {};
+      throw e;
+    }
+    await maybePushLiveFrame(page, applicationId);
 
     let previousStepId;
     let stepCount = 0;
@@ -294,6 +328,7 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
       );
       const summary = actList.actSummaries?.find(a => a.actId === actId);
       if (summary?.status === ActStatus.PENDING_HUMAN_ACTION) {
+        await maybePushLiveFrame(page, applicationId);
         onLog('Act PENDING_HUMAN_ACTION — intervention required.');
         await onPendingHuman?.({
           reason: 'Nova Act requested human action (see AWS Console trace).',
@@ -359,12 +394,14 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
       }
 
       if (!calls.length) {
+        if (stepCount % 3 === 0) await maybePushLiveFrame(page, applicationId);
         await delay(1500);
         continue;
       }
 
       try {
         callResults = await executeNovaActCalls(page, calls, msg => onLog(`  ${msg}`));
+        await maybePushLiveFrame(page, applicationId);
       } catch (e) {
         onLog(`Tool error: ${e?.message || e}`);
         return { success: false, status: 'failed', message: e?.message || String(e) };
@@ -381,6 +418,11 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
     onLog(`Fatal: ${msg}`);
     return { success: false, status: 'failed', message: msg };
   } finally {
+    try {
+      await stopScreencast();
+    } catch {
+      /* ignore */
+    }
     if (browser) await browser.close().catch(() => {});
   }
 }

@@ -4,9 +4,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch, buildApiPath, downloadSessionExtensionZip } from '../config.js';
 import { useApi } from '../hooks/useApi';
 import theme from '../theme';
+import NovaActPlaygroundPanel from './NovaActPlaygroundPanel.jsx';
 
 const SCREENSHOT_POLL_MS = 2000;
-const NOVA_TRACE_POLL_MS = 1500;
 
 function sessionHostname(url) {
   if (!url || typeof url !== 'string') return null;
@@ -29,8 +29,6 @@ export default function HITLDetail() {
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [screenshotBroken, setScreenshotBroken] = useState(false);
-  const [novaTraceText, setNovaTraceText] = useState('');
-  const [novaConsoleUrl, setNovaConsoleUrl] = useState(null);
 
   useEffect(() => {
     setScreenshotBroken(false);
@@ -85,43 +83,6 @@ export default function HITLDetail() {
     const interval = setInterval(() => setScreenshotTs(Date.now()), SCREENSHOT_POLL_MS);
     return () => clearInterval(interval);
   }, [blocker]);
-
-  useEffect(() => {
-    const pending = blocker?.status === 'pending';
-    const appId = blocker?.applicationId;
-    if (!pending || !appId) {
-      setNovaTraceText('');
-      setNovaConsoleUrl(null);
-      return undefined;
-    }
-    let cancelled = false;
-    async function pollNova() {
-      try {
-        const [tRes, mRes] = await Promise.all([
-          apiFetch(`/jobs/${appId}/nova-act/trace?t=${Date.now()}`),
-          apiFetch(`/jobs/${appId}/nova-act/run-meta?t=${Date.now()}`),
-        ]);
-        if (cancelled) return;
-        if (tRes.ok) {
-          const data = await tRes.json();
-          const lines = Array.isArray(data?.lines) ? data.lines : [];
-          setNovaTraceText(lines.slice(-40).join('\n'));
-        }
-        if (mRes.ok) {
-          const meta = await mRes.json();
-          if (meta?.consoleUrl) setNovaConsoleUrl(meta.consoleUrl);
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    pollNova();
-    const interval = setInterval(pollNova, NOVA_TRACE_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [blocker?.applicationId, blocker?.status]);
 
   function addLog(msg) {
     setActionLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 50));
@@ -185,7 +146,41 @@ export default function HITLDetail() {
   const showViewportPlaceholder = !blocker.hasScreenshot || screenshotBroken;
   const sessionSiteUrl = blocker.liveUrl || job?.jobLink || '';
   const siteHost = sessionHostname(sessionSiteUrl);
-  const consoleOpenUrl = blocker.consoleUrl || novaConsoleUrl;
+  const [runConsoleUrl, setRunConsoleUrl] = useState(null);
+  useEffect(() => {
+    const appId = blocker?.applicationId;
+    if (!appId || blocker?.status !== 'pending') {
+      setRunConsoleUrl(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const mRes = await apiFetch(`/jobs/${appId}/nova-act/run-meta?t=${Date.now()}`);
+        if (cancelled || !mRes.ok) return;
+        const meta = await mRes.json();
+        if (meta?.consoleUrl) setRunConsoleUrl(meta.consoleUrl);
+      } catch {
+        /* ignore */
+      }
+    })();
+    const id = setInterval(async () => {
+      try {
+        const mRes = await apiFetch(`/jobs/${appId}/nova-act/run-meta?t=${Date.now()}`);
+        if (!mRes.ok) return;
+        const meta = await mRes.json();
+        if (meta?.consoleUrl) setRunConsoleUrl(meta.consoleUrl);
+      } catch {
+        /* ignore */
+      }
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [blocker?.applicationId, blocker?.status]);
+
+  const consoleOpenUrl = blocker.consoleUrl || runConsoleUrl;
   const handleDownloadExtension = async () => {
     setExtensionDlBusy(true);
     try {
@@ -227,82 +222,18 @@ export default function HITLDetail() {
 
       <View style={styles.body}>
         <View style={styles.browserPane}>
-          <View style={styles.browserChrome}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={[styles.urlBar, { flex: 1 }]}>
-                <Text style={styles.urlText} numberOfLines={1}>{sessionSiteUrl || '—'}</Text>
-              </View>
-              {novaTraceText.length > 0 && isPending && (
-                <View style={styles.liveBadge}>
-                  <Text style={styles.liveBadgeText}>● Trace</Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          <div
-            style={{
-              position: 'relative',
-              width: '100%',
-              borderRadius: '0 0 10px 10px',
-              background: '#111',
-              minHeight: 200,
-            }}
-          >
-            {showViewportPlaceholder && (
-              <div
-                style={{
-                  padding: 16,
-                  color: '#aaa',
-                  fontSize: 13,
-                  lineHeight: 1.45,
-                }}
-              >
-                No static screenshot for this intervention. Use the AWS Nova Act console for the hosted browser; this panel shows the API trace from your server.
-              </div>
-            )}
-            <img
-              src={displaySrc}
-              alt="Intervention screenshot"
-              style={{
-                width: '100%',
-                maxHeight: 280,
-                objectFit: 'contain',
-                display: showViewportPlaceholder ? 'none' : 'block',
-                userSelect: 'none',
-              }}
-              draggable={false}
-              onLoad={() => setScreenshotBroken(false)}
-              onError={() => setScreenshotBroken(true)}
+          {isPending && blocker.applicationId ? (
+            <NovaActPlaygroundPanel
+              applicationId={blocker.applicationId}
+              jobPostingUrl={job?.jobLink || ''}
+              consoleUrl={consoleOpenUrl}
+              fallbackImageUrl={blocker.hasScreenshot && !showViewportPlaceholder ? displaySrc : null}
             />
-            {isPending && novaTraceText.length > 0 && (
-              <ScrollView
-                style={{ maxHeight: 220, padding: 10, backgroundColor: '#0a0a0a' }}
-                nestedScrollEnabled
-              >
-                <Text style={{ color: '#9d9', fontSize: 11, fontFamily: 'monospace' }}>
-                  {novaTraceText}
-                </Text>
-              </ScrollView>
-            )}
-            {!isPending && (
-              <div style={{
-                padding: 24, background: 'rgba(0,0,0,0.5)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <span style={{ color: '#fff', fontSize: 18, fontWeight: 700 }}>
-                  {blocker.status === 'resolved' ? 'Automation Resumed' : 'Intervention Ended'}
-                </span>
-              </div>
-            )}
-          </div>
-          {isPending && consoleOpenUrl && (
-            <TouchableOpacity
-              style={[styles.sessionBtnPrimary, { marginTop: 10 }]}
-              onPress={() => window.open(consoleOpenUrl, '_blank', 'noopener,noreferrer')}
-            >
-              <Text style={styles.sessionBtnPrimaryText}>Open AWS Nova Act console</Text>
-            </TouchableOpacity>
+          ) : (
+            <View>
+              <Text style={styles.sessionTitle}>Intervention ended</Text>
+              <Text style={styles.sessionBody}>Open the job from Jobs to start a new apply if needed.</Text>
+            </View>
           )}
         </View>
 
