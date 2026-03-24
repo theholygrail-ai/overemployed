@@ -10,10 +10,14 @@ COPY server ./server
 COPY context ./context
 COPY scripts ./scripts
 
-# Apply automation uses puppeteer-core + @sparticuz/chromium only (no Playwright browsers).
-# Do not use Puppeteer headless "shell" mode — it expects Playwright's chrome-headless-shell cache.
+# Puppeteer 24+ can resolve headless shell to ~/.cache/ms-playwright; pre-install so any
+# transitive puppeteer (e.g. linkedin-jobs-scraper) or shell-mode path finds the binary.
+# @sparticuz/chromium remains the primary browser for apply (lambdaBrowserEngine.js).
+RUN npx --yes playwright@1.51.0 install chromium \
+  && du -sh /root/.cache/ms-playwright 2>/dev/null || true
 
 ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 # Overridden per function in sam/template.yaml (server/lambda.handler vs server/worker-lambda.handler)
 CMD ["server/lambda.handler"]
