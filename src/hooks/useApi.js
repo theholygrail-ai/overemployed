@@ -40,7 +40,7 @@ async function request(path, options = {}) {
     const looksHtml = /^\s*</.test(text);
     throw new Error(
       looksHtml
-        ? 'API returned HTML instead of JSON — set VITE_API_URL to your backend (Vercel is serving the SPA for /api/*).'
+        ? 'API returned HTML instead of JSON — on Vercel, the SPA rewrite must not match /api/* (see vercel.json). Or set VITE_API_URL to an https:// API; with BACKEND_URL proxy leave VITE_API_URL unset.'
         : `Invalid JSON from API: ${snippet}${text.length > 80 ? '…' : ''}`
     );
   }

@@ -8,6 +8,10 @@
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/", "destination": "/index.html" },
+    {
+      "source": "/:path((?!api/|assets/|extension/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
