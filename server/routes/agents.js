@@ -134,8 +134,14 @@ export function createAgentRoutes(broadcast) {
     await setRunState({ running: true });
     broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
 
+    const { id } = req.params;
+    res.json({
+      status: 'started',
+      applicationId: id,
+      message: 'Apply started. Track progress via job status / interventions.',
+    });
+
     try {
-      const { id } = req.params;
       const ApplicatorAgent = (await import('../agents/ApplicatorAgent.js')).default;
       const applicator = new ApplicatorAgent({ broadcast });
       const result = await applicator.applyToApplication(id);
@@ -147,11 +153,15 @@ export function createAgentRoutes(broadcast) {
         result,
         message: result?.success ? 'Application submitted' : 'Apply finished',
       });
-
-      res.json(result);
     } catch (err) {
+      console.error('[agents/apply] Async apply error:', err.message);
       broadcast({ type: 'agent:status', status: 'idle', message: 'Apply error' });
-      next(err);
+      broadcast({
+        type: 'agent:apply_complete',
+        applicationId: id,
+        result: { success: false, status: 'failed', message: err.message },
+        message: `Apply failed: ${err.message}`,
+      });
     } finally {
       await setRunState({ running: false });
     }
