@@ -32,7 +32,7 @@ RUN npm ci --omit=dev
 
 # Nova Act runtime for apply (Python SDK + browser install per official docs)
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
-  && python3 -m pip install --no-cache-dir "nova-act>=3.0" \
+  && python3 -m pip install --break-system-packages --no-cache-dir "nova-act>=3.0" \
   && python3 -c "import nova_act; print('nova_act_ok')"
 RUN python3 -m playwright install chromium --with-deps || python3 -m playwright install chromium || true
 
