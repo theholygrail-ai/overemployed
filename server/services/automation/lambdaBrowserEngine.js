@@ -48,12 +48,17 @@ export async function applyWithPuppeteer(job, cvAssets, profile, artifacts, opti
     const execPath = await chromium.executablePath();
     console.log('[lambdaBrowserEngine] Chromium path:', execPath);
 
+    // @sparticuz/chromium args include --headless='shell'. Puppeteer 24+ maps headless "shell"
+    // to Playwright's chrome-headless-shell under ~/.cache/ms-playwright (not installed here).
+    // Strip those flags and use classic headless:true with the Sparticuz Chromium binary.
+    const args = chromium.args.filter((a) => !String(a).toLowerCase().includes('headless'));
+
     console.log('[lambdaBrowserEngine] Launching browser…');
     browser = await puppeteer.launch({
       executablePath: execPath,
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport ?? VIEWPORT,
-      headless: chromium.headless,
+      args,
+      defaultViewport: VIEWPORT,
+      headless: true,
     });
     console.log('[lambdaBrowserEngine] Browser launched successfully');
 
