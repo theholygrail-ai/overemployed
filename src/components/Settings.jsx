@@ -73,6 +73,16 @@ export default function Settings() {
         if (data) setApplyCredsMeta({ configured: data.configured, hosts: data.hosts || [] });
       })
       .catch(() => {});
+
+    apiFetch('/settings/job-criteria')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.updatedAt) return;
+        if (data.keywords != null) setKeywords(data.keywords);
+        if (data.location != null) setLocation(data.location);
+        if (data.filters != null) setFilters(data.filters);
+      })
+      .catch(() => {});
   }, []);
 
   const handleSaveLiCookie = async () => {
@@ -232,9 +242,26 @@ export default function Settings() {
     }
   };
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const handleSave = async () => {
+    try {
+      const res = await apiFetch('/settings/job-criteria', {
+        method: 'POST',
+        body: JSON.stringify({
+          keywords,
+          location,
+          filters,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        window.alert(err.error || res.statusText || 'Could not save job criteria');
+        return;
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      window.alert(e?.message || 'Save failed');
+    }
   };
 
   return (
@@ -463,10 +490,10 @@ export default function Settings() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Nova Act — site passwords (optional)</Text>
+        <Text style={styles.sectionTitle}>Apply — site passwords (optional)</Text>
         <Text style={styles.helpText}>
-          For local apply via WSL, the planner may ask Nova Act to log in. Passwords are typed via Playwright (not sent
-          in LLM prompts). Prefer session cookies + Session Helper when possible. Stored with your operator memory on the API server — use{' '}
+          Apply runs on the API server with AWS Nova Act (IAM, us-east-1) plus Playwright. Saved passwords are injected for host-specific
+          login flows only (not sent to LLM prompts). Prefer session cookies + Session Helper when possible. Stored with operator memory — use{' '}
           <Text style={{ fontWeight: '700' }}>API_KEY</Text> in production.
         </Text>
         <View style={[styles.linkedInRow, { marginBottom: theme.spacing.sm }]}>
@@ -532,9 +559,13 @@ export default function Settings() {
           placeholderTextColor={theme.colors.textMuted}
           multiline
         />
+        <Text style={[styles.helpText, { marginTop: theme.spacing.sm }]}>
+          Saved to the API (S3 when deployed on AWS). Empty keywords/location use the built-in default search list and
+          remote location. Click Save Settings to persist.
+        </Text>
       </View>
 
-      <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+      <TouchableOpacity style={styles.saveBtn} onPress={() => { void handleSave(); }}>
         <Text style={styles.saveBtnText}>{saved ? '✓ Saved' : 'Save Settings'}</Text>
       </TouchableOpacity>
     </ScrollView>

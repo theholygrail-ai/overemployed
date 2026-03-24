@@ -23,7 +23,7 @@ import { getApplyProofBuffer, getApplyProofMeta } from '../services/applyProof.j
 import { getMemoryKey } from '../services/memory.js';
 import { getDocxPath, generateDocx } from '../services/docxFormatter.js';
 import { getPdfPath, generatePdf } from '../services/cvPdf.js';
-import { getApplyLiveFrameBuffer } from '../services/applyLiveFrame.js';
+import { getNovaActTraceLines, getNovaActRunMeta } from '../services/automation/novaActTraceBuffer.js';
 
 const router = Router();
 
@@ -106,14 +106,25 @@ router.get('/api/jobs/:id/apply-proof/:index', async (req, res, next) => {
   }
 });
 
-/** Latest Nova / automation viewport frame while status is applying (throttled on server). */
-router.get('/api/jobs/:id/live-frame', async (req, res, next) => {
+/** Legacy live PNG preview — removed (AWS Nova Act uses trace + console). */
+router.get('/api/jobs/:id/live-frame', async (req, res) => {
+  res.status(204).end();
+});
+
+/** Nova Act trace lines (in-memory, same API host as apply). */
+router.get('/api/jobs/:id/nova-act/trace', async (req, res, next) => {
   try {
-    const buf = getApplyLiveFrameBuffer(req.params.id);
-    if (!buf) return res.status(204).end();
-    res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.send(buf);
+    res.json({ applicationId: req.params.id, lines: getNovaActTraceLines(req.params.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/api/jobs/:id/nova-act/run-meta', async (req, res, next) => {
+  try {
+    const meta = getNovaActRunMeta(req.params.id);
+    if (!meta) return res.status(404).json({ error: 'No active Nova Act run metadata' });
+    res.json(meta);
   } catch (err) {
     next(err);
   }

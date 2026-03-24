@@ -80,10 +80,12 @@ Copy `.env.example` to `.env` and fill in your keys:
 cp .env.example .env
 ```
 
-Required:
-- `GROQ_API_KEY` -- your Groq API key
+Required (API server / EC2):
+- `NOVA_ACT_WORKFLOW_DEFINITION_NAME` -- Nova Act workflow definition in **us-east-1** (IAM apply)
+- `DATA_S3_BUCKET` -- S3 bucket for app state and CV presign URLs for apply
 
 Optional:
+- `GROQ_API_KEY` -- Groq (session-cookie extract and other features; not used for apply)
 - `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` -- register free at https://developer.adzuna.com
 - `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` -- register at https://developer.linkedin.com
 

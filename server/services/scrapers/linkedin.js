@@ -7,6 +7,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_PATH = path.join(__dirname, 'linkedin-worker.js');
 const TIMEOUT_MS = 120_000;
 
+/** Lambda resolves linkedin-jobs-scraper from task-root node_modules; cwd must be task root. */
+function scraperCwd() {
+  if (process.env.LAMBDA_TASK_ROOT) return process.env.LAMBDA_TASK_ROOT;
+  return path.join(__dirname, '..', '..', '..');
+}
+
 export async function scrapeLinkedIn(keywords, options = {}) {
   const { location = 'Remote', limit = 15, liAtCookie } = options;
 
@@ -24,8 +30,14 @@ export async function scrapeLinkedIn(keywords, options = {}) {
       liAtCookie,
     });
 
+    const root = scraperCwd();
+    const nodeModules = path.join(root, 'node_modules');
+    const nodePath = [nodeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
+
     const child = spawn(process.execPath, [WORKER_PATH], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: root,
+      env: { ...process.env, NODE_PATH: nodePath },
     });
 
     let stdout = '';

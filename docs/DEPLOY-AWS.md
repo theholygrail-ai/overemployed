@@ -1,6 +1,6 @@
 # Deploy API on AWS (EC2 + Docker) — low cost
 
-The Express API **cannot** run on Vercel serverless (long jobs, WebSockets, Playwright, cron). Use a small **EC2** instance with **Docker Compose**.
+The Express API **cannot** run on Vercel serverless (long jobs, WebSockets, Nova Act / Docker, cron). Use a small **EC2** instance with **Docker Compose**.
 
 ## 0. Automated provisioning (optional)
 
@@ -45,9 +45,11 @@ cd overemployed
 
 Create `.env` on the instance (do not commit). Minimum:
 
-- `GROQ_API_KEY`
-- `AWS_REGION`
-- Credentials: instance **IAM role** (recommended) or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` with DynamoDB access
+- `AWS_REGION` — DynamoDB / S3 region for this app (Nova Act control-plane calls still use **us-east-1** in code; IAM must allow Nova Act there).
+- Credentials: instance **IAM role** (recommended) or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` with DynamoDB + S3 + Nova Act permissions (see `sam/template.yaml` Statement blocks).
+- `NOVA_ACT_WORKFLOW_DEFINITION_NAME` — registered workflow definition in **us-east-1** (verify with `npm run ensure:nova-workflow`).
+- `DATA_S3_BUCKET` — required for presigned CV URLs passed into apply tasks (same bucket as app data is fine).
+- `GROQ_API_KEY` — optional; used for session-cookie AI extract and other Groq features, not for apply automation.
 - `FRONTEND_URL` or `FRONTEND_URLS` — your **Vercel** URL(s), comma-separated
 - `PORT=4900`
 - `API_KEY` — random secret; use the same value in Vercel as `VITE_API_KEY`
@@ -103,3 +105,5 @@ location /ws {
 ## 8. IAM role (recommended)
 
 Attach a role to the instance with `dynamodb:GetItem`, `PutItem`, `Query`, `Scan`, `UpdateItem`, `DeleteItem` on `TheHolyGrail-Applications` (and any GSIs). No long-lived keys on disk.
+
+For **apply**, also allow **S3** read/write on your `DATA_S3_BUCKET` (CV presign uploads under `nova-act-inputs/`), **Nova Act** control-plane actions in **us-east-1** (`ListModels`, `CreateWorkflowRun`, `GetWorkflowRun`, `CreateSession`, `CreateAct`, `ListActs`, `InvokeActStep`, `UpdateAct`, and optional `ListWorkflowDefinitions` / `CreateWorkflowDefinition`), and **CloudWatch Logs** read (`FilterLogEvents`, etc.) for the log group returned by `GetWorkflowRun`. Mirror the `Statement` blocks under `OrchestratorFunction` / `HttpApiFunction` in `sam/template.yaml`.

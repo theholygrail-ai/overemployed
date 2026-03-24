@@ -31,7 +31,25 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ''
-    Description: Amazon Nova Act API key (apply automation). Can also set on the function in console.
+    Description: Optional Playground API key; production apply uses IAM + workflow definition (not required when using IAM).
+  NovaActWorkflowDefinitionName:
+    Type: String
+    Default: ''
+    Description: >
+      Registered Nova Act workflow definition name in us-east-1 (required for apply). Create in console, CDK, or npm run ensure:nova-workflow.
+  NovaActModelId:
+    Type: String
+    Default: nova-act-latest
+    Description: Nova Act model id passed to CreateWorkflowRun.
+  PipelineScheduleExpression:
+    Type: String
+    Default: ''
+    Description: >
+      Optional EventBridge schedule for the job pipeline (worker Lambda). Examples: rate(6 hours), cron(0 12 * * ? *).
+      Leave empty to disable. Uses job criteria from S3 (Settings > Save). Same payload as POST /api/agents/run without a body override.
+
+Conditions:
+  HasPipelineSchedule: !Not [!Equals [!Ref PipelineScheduleExpression, '']]
 
 Globals:
   Function:
@@ -47,6 +65,8 @@ Globals:
         ADZUNA_APP_KEY: !Ref AdzunaAppKey
         API_KEY: !Ref ApiKey
         NOVA_ACT_API_KEY: !Ref NovaActApiKey
+        NOVA_ACT_WORKFLOW_DEFINITION_NAME: !Ref NovaActWorkflowDefinitionName
+        NOVA_ACT_MODEL_ID: !Ref NovaActModelId
         FRONTEND_URLS: !Ref FrontendOrigins
         ENABLE_NODE_CRON: 'false'
 
@@ -74,6 +94,30 @@ Resources:
             TableName: !Ref DynamoTableName
         - S3CrudPolicy:
             BucketName: !Ref DataBucket
+        - Statement:
+            - Sid: NovaActControlPlane
+              Effect: Allow
+              Action:
+                - nova-act:ListModels
+                - nova-act:CreateWorkflowRun
+                - nova-act:GetWorkflowRun
+                - nova-act:CreateSession
+                - nova-act:CreateAct
+                - nova-act:ListActs
+                - nova-act:InvokeActStep
+                - nova-act:UpdateAct
+                - nova-act:ListWorkflowDefinitions
+                - nova-act:CreateWorkflowDefinition
+                - nova-act:GetWorkflowDefinition
+              Resource: '*'
+            - Sid: NovaActCloudWatchLogs
+              Effect: Allow
+              Action:
+                - logs:FilterLogEvents
+                - logs:GetLogEvents
+                - logs:DescribeLogGroups
+                - logs:DescribeLogStreams
+              Resource: '*'
     Metadata:
       Dockerfile: ../Dockerfile.lambda
       DockerContext: ..
@@ -100,6 +144,30 @@ Resources:
               Action:
                 - lambda:InvokeFunction
               Resource: !GetAtt OrchestratorFunction.Arn
+        - Statement:
+            - Sid: NovaActControlPlane
+              Effect: Allow
+              Action:
+                - nova-act:ListModels
+                - nova-act:CreateWorkflowRun
+                - nova-act:GetWorkflowRun
+                - nova-act:CreateSession
+                - nova-act:CreateAct
+                - nova-act:ListActs
+                - nova-act:InvokeActStep
+                - nova-act:UpdateAct
+                - nova-act:ListWorkflowDefinitions
+                - nova-act:CreateWorkflowDefinition
+                - nova-act:GetWorkflowDefinition
+              Resource: '*'
+            - Sid: NovaActCloudWatchLogs
+              Effect: Allow
+              Action:
+                - logs:FilterLogEvents
+                - logs:GetLogEvents
+                - logs:DescribeLogGroups
+                - logs:DescribeLogStreams
+              Resource: '*'
     Metadata:
       Dockerfile: ../Dockerfile.lambda
       DockerContext: ..
@@ -126,6 +194,27 @@ Resources:
       Principal: '*'
       Action: lambda:InvokeFunctionUrl
       FunctionUrlAuthType: NONE
+
+  PipelineScheduleRule:
+    Type: AWS::Events::Rule
+    Condition: HasPipelineSchedule
+    Properties:
+      Description: Run job search pipeline on a schedule (criteria from S3 / defaults)
+      ScheduleExpression: !Ref PipelineScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: OrchestratorPipeline
+          Arn: !GetAtt OrchestratorFunction.Arn
+          Input: '{"action":"run"}'
+
+  PipelineSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasPipelineSchedule
+    Properties:
+      FunctionName: !Ref OrchestratorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PipelineScheduleRule.Arn
 
 Outputs:
   HttpApiUrl:

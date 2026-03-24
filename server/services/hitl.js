@@ -20,7 +20,15 @@ const BLOCKER_PREFIX = 'blockers/';
 const SCREENSHOT_PREFIX = 'screenshots/';
 const COMMANDS_PREFIX = 'hitl-commands/';
 
+/** @type {Map<string, string>} applicationId -> pending blocker id (for live viewport updates) */
+const pendingBlockerIdByApplication = new Map();
+
 let broadcastFn = null;
+
+export function getPendingBlockerIdForApplication(applicationId) {
+  if (!applicationId) return null;
+  return pendingBlockerIdByApplication.get(String(applicationId)) ?? null;
+}
 
 async function ensureLocalDir() {
   await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
@@ -30,7 +38,7 @@ async function ensureLocalDir() {
 /*  Create                                                             */
 /* ------------------------------------------------------------------ */
 
-export async function createBlocker(applicationId, reason, screenshotBuffer, liveUrl) {
+export async function createBlocker(applicationId, reason, screenshotBuffer, liveUrl, extra = {}) {
   const id = uuidv4();
 
   const blocker = {
@@ -39,6 +47,7 @@ export async function createBlocker(applicationId, reason, screenshotBuffer, liv
     reason,
     hasScreenshot: Boolean(screenshotBuffer),
     liveUrl: liveUrl || null,
+    consoleUrl: extra.consoleUrl || null,
     status: 'pending',
     createdAt: new Date().toISOString(),
     resolvedAt: null,
@@ -57,6 +66,8 @@ export async function createBlocker(applicationId, reason, screenshotBuffer, liv
     }
     localBlockers.set(id, blocker);
   }
+
+  pendingBlockerIdByApplication.set(String(applicationId), id);
 
   if (broadcastFn) {
     broadcastFn({ type: 'blocker:created', blocker });
@@ -113,12 +124,14 @@ export async function resolveBlocker(id) {
     blocker.status = 'resolved';
     blocker.resolvedAt = new Date().toISOString();
     await putJsonKey(`${BLOCKER_PREFIX}${id}.json`, blocker);
+    if (blocker.applicationId) pendingBlockerIdByApplication.delete(String(blocker.applicationId));
     if (broadcastFn) broadcastFn({ type: 'blocker:resolved', blocker });
     return blocker;
   }
 
   const blocker = localBlockers.get(id);
   if (!blocker) return null;
+  if (blocker.applicationId) pendingBlockerIdByApplication.delete(String(blocker.applicationId));
   blocker.status = 'resolved';
   blocker.resolvedAt = new Date().toISOString();
   localBlockers.set(id, blocker);
@@ -134,12 +147,14 @@ export async function skipBlocker(id) {
     blocker.status = 'skipped';
     blocker.resolvedAt = new Date().toISOString();
     await putJsonKey(`${BLOCKER_PREFIX}${id}.json`, blocker);
+    if (blocker.applicationId) pendingBlockerIdByApplication.delete(String(blocker.applicationId));
     if (broadcastFn) broadcastFn({ type: 'blocker:skipped', blocker });
     return blocker;
   }
 
   const blocker = localBlockers.get(id);
   if (!blocker) return null;
+  if (blocker.applicationId) pendingBlockerIdByApplication.delete(String(blocker.applicationId));
   blocker.status = 'skipped';
   blocker.resolvedAt = new Date().toISOString();
   localBlockers.set(id, blocker);
@@ -262,12 +277,21 @@ export async function pollCommands(blockerId) {
 export async function updateScreenshot(blockerId, buffer) {
   if (isS3DataEnabled()) {
     await putBinaryKey(`${SCREENSHOT_PREFIX}${blockerId}.png`, buffer, 'image/png');
+    const blocker = await getJsonKey(`${BLOCKER_PREFIX}${blockerId}.json`);
+    if (blocker && !blocker.hasScreenshot) {
+      blocker.hasScreenshot = true;
+      await putJsonKey(`${BLOCKER_PREFIX}${blockerId}.json`, blocker);
+    }
   } else {
     await ensureLocalDir();
     const filePath = path.join(SCREENSHOT_DIR, `${blockerId}.png`);
     await fs.writeFile(filePath, buffer);
     const blocker = localBlockers.get(blockerId);
-    if (blocker) blocker.screenshotPath = filePath;
+    if (blocker) {
+      blocker.screenshotPath = filePath;
+      blocker.hasScreenshot = true;
+      localBlockers.set(blockerId, blocker);
+    }
   }
 }
 

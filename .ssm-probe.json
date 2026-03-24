@@ -1,0 +1,1 @@
+{"commands":["set -e","cd /opt/overemployed","docker compose exec -T api node -e \"import('./server/services/automation/novaActAwsService.js').then(async (m)=>{const ok=await m.probeNovaActAws(); console.log('NOVA_ACT_AWS_OK=' + ok); process.exit(0);}).catch((e)=>{console.error(e); process.exit(1);})\""]}

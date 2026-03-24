@@ -5,6 +5,7 @@ import CVGeneratorAgent from './CVGeneratorAgent.js';
 import ReviewerAgent from './ReviewerAgent.js';
 import ApplicatorAgent from './ApplicatorAgent.js';
 import { getMemoryKey } from '../services/memory.js';
+import { DEFAULT_CRITERIA } from '../config/defaultJobCriteria.js';
 
 const CONTEXT_FILES = [
   'identity.md',
@@ -14,22 +15,6 @@ const CONTEXT_FILES = [
   'tools.md',
   'context.md',
 ];
-
-const DEFAULT_CRITERIA = {
-  keywords: [
-    'AI Engineer',
-    'Automation Engineer',
-    'Software Developer',
-    'Systems Analyst',
-    'Solutions Engineer',
-    'Technical Writer',
-  ],
-  location: 'remote',
-  filters: {
-    remoteOnly: true,
-    j2Compatible: true,
-  },
-};
 
 export default class OrchestratorAgent extends BaseAgent {
   constructor(options = {}) {

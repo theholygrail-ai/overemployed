@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApi, apiGet } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { formatDate, truncate, statusColor, sourceIcon, formatDateTime } from '../utils/formatters';
-import { apiFetch, buildApiPath, getWsUrl } from '../config.js';
+import { apiFetch, getWsUrl } from '../config.js';
 import CVViewer from './CVViewer';
 import ApplicationProofModal from './ApplicationProofModal';
 import theme from '../theme';
@@ -34,8 +34,10 @@ export default function JobList() {
   const [runInProgress, setRunInProgress] = useState(false);
   const [applyError, setApplyError] = useState(null);
   const [hitlNavError, setHitlNavError] = useState(null);
-  /** Bump so applying rows refetch live-frame PNG from API */
-  const [liveFrameTick, setLiveFrameTick] = useState(0);
+  /** Latest apply progress line (WebSocket agent_log apply_progress) */
+  const [applyLiveLog, setApplyLiveLog] = useState({});
+  /** Nova Act AWS trace tail per applicationId (poll + WS) */
+  const [novaTraceText, setNovaTraceText] = useState({});
   const fetchDebounceRef = useRef(null);
   const pollRef = useRef(null);
   const runBusyRef = useRef(false);
@@ -79,6 +81,16 @@ export default function JobList() {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
             setApplyingId(null);
+            setApplyLiveLog((prev) => {
+              const next = { ...prev };
+              delete next[applicationId];
+              return next;
+            });
+            setNovaTraceText((prev) => {
+              const next = { ...prev };
+              delete next[applicationId];
+              return next;
+            });
           }
           return done;
         } catch (e) {
@@ -115,9 +127,24 @@ export default function JobList() {
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
   useEffect(() => {
-    const anyApplying = jobs.some((j) => j.status === 'applying');
-    if (!anyApplying) return undefined;
-    const id = setInterval(() => setLiveFrameTick((t) => t + 1), 2800);
+    const applying = jobs.filter((j) => j.status === 'applying');
+    if (applying.length === 0) return undefined;
+    const tick = async () => {
+      for (const j of applying) {
+        try {
+          const data = await apiGet(`/jobs/${j.applicationId}/nova-act/trace`);
+          const lines = Array.isArray(data?.lines) ? data.lines : [];
+          if (lines.length) {
+            const tail = lines.slice(-10).join('\n');
+            setNovaTraceText((prev) => ({ ...prev, [j.applicationId]: tail }));
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2500);
     return () => clearInterval(id);
   }, [jobs]);
 
@@ -143,6 +170,36 @@ export default function JobList() {
     ) {
       clearTimeout(fetchDebounceRef.current);
       fetchDebounceRef.current = setTimeout(() => fetchJobs(), 300);
+    }
+    if (last.type === 'agent_log' && last.event === 'apply_progress' && last.applicationId) {
+      const line = (last.thinking && String(last.thinking).trim())
+        ? last.thinking
+        : (last.message || '');
+      if (line) {
+        setApplyLiveLog((prev) => ({ ...prev, [last.applicationId]: line }));
+      }
+    }
+    if (last.type === 'agent:apply_complete' && last.applicationId) {
+      setApplyLiveLog((prev) => {
+        const next = { ...prev };
+        delete next[last.applicationId];
+        return next;
+      });
+      setNovaTraceText((prev) => {
+        const next = { ...prev };
+        delete next[last.applicationId];
+        return next;
+      });
+    }
+    if (last.type === 'nova_act_trace' && last.applicationId && last.line) {
+      setNovaTraceText((prev) => {
+        const cur = prev[last.applicationId] || '';
+        const nextLine = String(last.line);
+        const combined = cur ? `${cur}\n${nextLine}` : nextLine;
+        const lines = combined.split('\n');
+        const tail = lines.slice(-12).join('\n');
+        return { ...prev, [last.applicationId]: tail };
+      });
     }
   }, [messages, fetchJobs]);
 
@@ -311,7 +368,7 @@ export default function JobList() {
                 { key: 'source', label: 'Source', width: 100 },
                 { key: 'matchScore', label: 'Match', width: 80 },
                 { key: 'dateFound', label: 'Date Found', width: 120 },
-                { key: null, label: 'Live', width: 96 },
+                { key: null, label: 'Trace', width: 200 },
                 { key: null, label: 'Actions', width: 400 },
               ].map((col) => (
                 <TouchableOpacity
@@ -355,26 +412,11 @@ export default function JobList() {
                   <View style={[styles.td, { width: 120 }]}>
                     <Text style={styles.tdTextMuted}>{formatDate(job.dateFound)}</Text>
                   </View>
-                  <View style={[styles.td, { width: 96, justifyContent: 'center' }]}>
+                  <View style={[styles.td, { width: 200, justifyContent: 'flex-start' }]}>
                     {job.status === 'applying' ? (
-                      <div
-                        style={{
-                          width: 88,
-                          height: 50,
-                          borderRadius: 6,
-                          overflow: 'hidden',
-                          background: '#111',
-                        }}
-                      >
-                        <img
-                          alt=""
-                          src={`${buildApiPath(`/jobs/${job.applicationId}/live-frame`)}?t=${liveFrameTick}`}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                          onError={(e) => {
-                            e.target.style.opacity = '0.12';
-                          }}
-                        />
-                      </div>
+                      <Text style={[styles.tdTextMuted, { fontSize: 10, lineHeight: 13, fontFamily: 'monospace' }]} numberOfLines={6}>
+                        {novaTraceText[job.applicationId] || applyLiveLog[job.applicationId] || '…'}
+                      </Text>
                     ) : (
                       <Text style={styles.tdTextMuted}>—</Text>
                     )}
@@ -392,8 +434,15 @@ export default function JobList() {
                       </TouchableOpacity>
                     )}
                     {job.status === 'applying' && (
-                      <View style={[styles.actionBtn, { backgroundColor: theme.colors.warning + '22' }]}>
-                        <Text style={[styles.actionText, { color: theme.colors.warning }]}>Applying...</Text>
+                      <View style={{ maxWidth: 380, gap: 6 }}>
+                        <View style={[styles.actionBtn, { backgroundColor: theme.colors.warning + '22' }]}>
+                          <Text style={[styles.actionText, { color: theme.colors.warning }]}>Applying...</Text>
+                        </View>
+                        {applyLiveLog[job.applicationId] ? (
+                          <Text style={[styles.tdTextMuted, { fontSize: 11, lineHeight: 15 }]} numberOfLines={4}>
+                            {applyLiveLog[job.applicationId]}
+                          </Text>
+                        ) : null}
                       </View>
                     )}
                     {job.status === 'blocked' && (

@@ -9,6 +9,7 @@ import hitlRoutes from './routes/hitl.js';
 import sessionCookiesRoutes from './routes/sessionCookies.js';
 import sessionCaptureRoutes from './routes/sessionCapture.js';
 import applyCredentialsRoutes from './routes/applyCredentials.js';
+import jobCriteriaRoutes from './routes/jobCriteria.js';
 import errorHandler from './middleware/errorHandler.js';
 import { mutationRateLimitMiddleware } from './middleware/mutationRateLimit.js';
 
@@ -38,6 +39,7 @@ export function createApp({ broadcast }) {
   app.use(sessionCookiesRoutes);
   app.use(sessionCaptureRoutes);
   app.use(applyCredentialsRoutes);
+  app.use(jobCriteriaRoutes);
 
   app.use(errorHandler);
 

@@ -4,15 +4,7 @@ import { scrapeRemotive } from '../services/scrapers/remotive.js';
 import { scrapeAdzuna } from '../services/scrapers/adzuna.js';
 import { scrapeLinkedIn } from '../services/scrapers/linkedin.js';
 import { getMemoryKey } from '../services/memory.js';
-
-const DEFAULT_KEYWORDS = [
-  'AI Engineer',
-  'Automation Engineer',
-  'Software Developer',
-  'Systems Analyst',
-  'Solutions Engineer',
-  'Technical Writer',
-];
+import { DEFAULT_JOB_KEYWORDS } from '../config/defaultJobCriteria.js';
 
 const SCORE_BATCH_SIZE = 5;
 const MIN_SCORE = 60;
@@ -36,7 +28,10 @@ export default class ResearcherAgent extends BaseAgent {
   }
 
   async findJobs(criteria = {}) {
-    const keywords = criteria.keywords || DEFAULT_KEYWORDS;
+    const keywords =
+      Array.isArray(criteria.keywords) && criteria.keywords.length > 0
+        ? criteria.keywords
+        : DEFAULT_JOB_KEYWORDS;
     this.log('find_jobs_start', { keywords, criteria });
 
     const linkedInData = await getMemoryKey('linkedin');

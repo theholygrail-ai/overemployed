@@ -57,6 +57,9 @@ function main() {
     ...cur,
     GROQ_API_KEY: local.GROQ_API_KEY || cur.GROQ_API_KEY || '',
     NOVA_ACT_API_KEY: local.NOVA_ACT_API_KEY || cur.NOVA_ACT_API_KEY || '',
+    NOVA_ACT_WORKFLOW_DEFINITION_NAME:
+      local.NOVA_ACT_WORKFLOW_DEFINITION_NAME || cur.NOVA_ACT_WORKFLOW_DEFINITION_NAME || '',
+    NOVA_ACT_MODEL_ID: local.NOVA_ACT_MODEL_ID || cur.NOVA_ACT_MODEL_ID || 'nova-act-latest',
     ADZUNA_APP_ID: local.ADZUNA_APP_ID || cur.ADZUNA_APP_ID || '',
     ADZUNA_APP_KEY: local.ADZUNA_APP_KEY || cur.ADZUNA_APP_KEY || '',
     LINKEDIN_CLIENT_ID: local.LINKEDIN_CLIENT_ID || cur.LINKEDIN_CLIENT_ID || '',
@@ -76,9 +79,6 @@ function main() {
     DYNAMODB_TABLE_NAME: local.DYNAMODB_TABLE_NAME || cur.DYNAMODB_TABLE_NAME || 'TheHolyGrail-Applications',
     AWS_REGION: local.AWS_REGION || region,
     PORT: local.PORT || cur.PORT || '4900',
-    NOVA_ACT_USE_DOCKER: cur.NOVA_ACT_USE_DOCKER || 'true',
-    NOVA_ACT_HOST_DATA_PATH: cur.NOVA_ACT_HOST_DATA_PATH || '/opt/overemployed/data',
-    NOVA_ACT_DOCKER_IMAGE: cur.NOVA_ACT_DOCKER_IMAGE || 'overemployed-nova-act:latest',
   };
 
   const tmp = path.join(root, '.ec2-secret.tmp.json');

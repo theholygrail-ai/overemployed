@@ -36,7 +36,7 @@ This document tracks **what was verified**, **what was fixed in-repo**, and **wh
 | **Idempotency** | Double-clicks on Run/Apply can race; consider idempotency keys or UI debouncing. |
 | **Settings vs server** | Client “settings” for Groq/criteria in `Settings.jsx` are largely **localStorage**; server uses **env** — document clearly or sync. |
 | **Agent Monitor** | Without WebSocket, live log is empty; metrics polling does not backfill agent logs into the UI. |
-| **Tests** | No automated E2E suite in repo; add Playwright against staging when stable. |
+| **Tests** | Vitest unit tests + CI build; optional E2E can be added separately. |
 
 ## Operator checklist before a real campaign
 

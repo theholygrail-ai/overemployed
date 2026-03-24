@@ -7,6 +7,7 @@ dotenv.config();
 
 import OrchestratorAgent from './agents/OrchestratorAgent.js';
 import { setRunState } from './services/runState.js';
+import { resolveRunCriteria } from './services/jobSearchCriteria.js';
 
 function noopBroadcast() {}
 
@@ -25,7 +26,8 @@ export async function handler(event) {
     await setRunState({ running: true, lastRunResult: null });
     try {
       const orchestrator = new OrchestratorAgent({ broadcast });
-      const lastRunResult = await orchestrator.run(payload.criteria);
+      const criteria = await resolveRunCriteria(payload.criteria);
+      const lastRunResult = await orchestrator.run(criteria);
       await setRunState({ running: false, lastRunResult });
       return { ok: true, lastRunResult };
     } catch (err) {

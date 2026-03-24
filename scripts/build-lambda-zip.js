@@ -39,7 +39,6 @@ if (fs.existsSync(extZip)) {
 console.log('--- Creating slim package.json ---');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const slimDeps = { ...pkg.dependencies };
-delete slimDeps['playwright'];
 delete slimDeps['linkedin-jobs-scraper'];
 delete slimDeps['concurrently'];
 delete slimDeps['react'];

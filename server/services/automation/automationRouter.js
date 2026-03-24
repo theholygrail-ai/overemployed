@@ -1,29 +1,29 @@
 /**
- * Apply automation: **Amazon Nova Act only** (`nova-act` SDK via `novaActBridge` / `scripts/nova_act_agent.py`).
- * Runs on EC2, local dev (WSL/Docker), and AWS Lambda (Python worker in the same container image).
+ * Apply automation: **Amazon Nova Act (AWS IAM control plane)** via
+ * [novaActAwsService.js](./novaActAwsService.js) — us-east-1, Playwright tool runner, no Groq.
  *
- * @see https://nova.amazon.com/dev/documentation
+ * @see https://docs.aws.amazon.com/nova-act/latest/userguide/interfaces.html
  */
 
 /** @param {{ docxPath: string, pdfPath: string }} cvAssets */
 export async function applyToJob(job, cvAssets, profile, artifacts, options = {}) {
   try {
-    const { isNovaActAvailable, applyWithNovaAct } = await import('./novaActBridge.js');
-    const novaAvailable = await isNovaActAvailable();
-    if (!novaAvailable) {
+    const { probeNovaActAws, applyWithNovaActAws } = await import('./novaActAwsService.js');
+    const novaOk = await probeNovaActAws();
+    if (!novaOk) {
       const msg =
-        'Nova Act is not available (probe failed). Install Python `nova-act` and browsers (see Dockerfile.nova-act / Dockerfile.lambda), or set NOVA_ACT_USE_DOCKER + NOVA_ACT_HOST_DATA_PATH for the Nova image.';
+        'Nova Act AWS is not reachable or not configured. Set NOVA_ACT_WORKFLOW_DEFINITION_NAME, AWS credentials for us-east-1, and IAM permissions (nova-act:ListModels, CreateWorkflowRun, …). Optionally run scripts/ensure-nova-workflow-definition.mjs once.';
       console.error(`[automationRouter] ${msg}`);
       options.onProgress?.(msg);
-      return { engine: 'nova-act', success: false, status: 'failed', message: msg };
+      return { engine: 'nova-act-aws', success: false, status: 'failed', message: msg };
     }
 
-    console.log(`[automationRouter] Using Nova Act for ${job.company} — ${job.title}`);
-    options.onProgress?.('Using Nova Act (Groq planner + session cookies)');
-    const result = await applyWithNovaAct(job, cvAssets, profile, artifacts, options);
-    return { engine: 'nova-act', ...result };
+    console.log(`[automationRouter] Nova Act AWS for ${job.company} — ${job.title}`);
+    options.onProgress?.('Using Nova Act (AWS IAM + Playwright tool runner)');
+    const result = await applyWithNovaActAws(job, cvAssets, profile, artifacts, options);
+    return { engine: 'nova-act-aws', ...result };
   } catch (err) {
-    console.error(`[automationRouter] Nova Act failed: ${err.message}`);
-    return { engine: 'nova-act', success: false, status: 'failed', message: err.message };
+    console.error(`[automationRouter] Nova Act AWS failed: ${err.message}`);
+    return { engine: 'nova-act-aws', success: false, status: 'failed', message: err.message };
   }
 }

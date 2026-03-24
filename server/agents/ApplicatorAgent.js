@@ -2,7 +2,7 @@ import BaseAgent from './BaseAgent.js';
 import { generateDocx, getDocxPath } from '../services/docxFormatter.js';
 import { generatePdf, getPdfPath } from '../services/cvPdf.js';
 import { applyToJob } from '../services/automation/automationRouter.js';
-import { createBlocker } from '../services/hitl.js';
+import { createBlocker, waitForResolution } from '../services/hitl.js';
 import { getApplication, updateApplicationStatus, updateApplicationStatusWithApplyProof } from '../services/dynamodb.js';
 import { normalizeApplyScreenshots, saveApplyProof } from '../services/applyProof.js';
 import { getMemoryKey } from '../services/memory.js';
@@ -10,7 +10,7 @@ import { getStoredSessionCookies } from '../services/sessionCookies.js';
 import { dataRoot } from '../lib/dataPath.js';
 import path from 'path';
 import fs from 'fs/promises';
-import { recordApplyLiveFrame, clearApplyLiveFrame } from '../services/applyLiveFrame.js';
+import { resetNovaActApplyBuffer, getNovaActRunMeta } from '../services/automation/novaActTraceBuffer.js';
 
 export default class ApplicatorAgent extends BaseAgent {
   constructor(options = {}) {
@@ -29,6 +29,7 @@ export default class ApplicatorAgent extends BaseAgent {
     if (!application) throw new Error(`Application ${applicationId} not found`);
 
     await updateApplicationStatus(applicationId, 'applying');
+    resetNovaActApplyBuffer(applicationId);
     this.log('apply_start', { applicationId, roleTitle: application.roleTitle });
 
     let docxPath = await getDocxPath(applicationId);
@@ -58,7 +59,6 @@ export default class ApplicatorAgent extends BaseAgent {
     const liAtCookie = linkedInData?.liAtCookie || null;
 
     const { cookies: sessionCookies } = await getStoredSessionCookies();
-    const siteCredentials = (await getMemoryKey('applySiteCredentials')) || {};
 
     const job = {
       url: application.jobLink,
@@ -84,27 +84,38 @@ export default class ApplicatorAgent extends BaseAgent {
     let result;
     try {
       result = await applyToJob(job, cvAssets, profile, artifacts, {
-      knowledgePack,
-      liAtCookie,
-      sessionCookies,
-      siteCredentials,
-      groqApiKey: process.env.GROQ_API_KEY,
-      novaActApiKey: process.env.NOVA_ACT_API_KEY,
-      plannerModel: process.env.GROQ_NOVA_PLANNER_MODEL,
-      headless: process.env.NOVA_ACT_HEADLESS === 'true',
-      onProgress: (msg, liveShot) => {
-        this.log('apply_progress', { applicationId, message: msg });
-        if (liveShot) recordApplyLiveFrame(applicationId, liveShot);
-      },
-      onBlocker: async (reason, screenshot, url) => {
-        const blocker = await createBlocker(applicationId, reason, screenshot, url);
-        this.log('apply_blocked', { applicationId, blockerId: blocker.id, reason });
-        await updateApplicationStatus(applicationId, 'blocked');
-        return blocker;
-      },
-    });
-    } finally {
-      clearApplyLiveFrame(applicationId);
+        knowledgePack,
+        liAtCookie,
+        sessionCookies,
+        applicationId,
+        onProgress: msg => {
+          this.log('apply_progress', { applicationId, message: msg });
+        },
+        onTrace: line => {
+          if (this.broadcast) {
+            this.broadcast({ type: 'nova_act_trace', applicationId, line });
+          }
+        },
+        onPendingHuman: async ({ reason }) => {
+          const meta = getNovaActRunMeta(applicationId);
+          const blocker = await createBlocker(
+            applicationId,
+            reason || 'Nova Act requested human action. Use AWS Nova Act console for the live trace, then tap Proceed.',
+            null,
+            job.url || null,
+            { consoleUrl: meta?.consoleUrl || null },
+          );
+          this.log('apply_blocked', { applicationId, blockerId: blocker.id, reason: blocker.reason });
+          await updateApplicationStatus(applicationId, 'blocked');
+          await waitForResolution(blocker.id);
+          await updateApplicationStatus(applicationId, 'applying');
+          this.log('apply_resumed', { applicationId, blockerId: blocker.id });
+        },
+      });
+    } catch (err) {
+      const msg = err?.message || String(err);
+      result = { success: false, status: 'failed', message: msg, engine: 'nova-act-aws' };
+      this.log('apply_exception', { applicationId, error: msg });
     }
 
     if (result.success && result.verified !== false) {

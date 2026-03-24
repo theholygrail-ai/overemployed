@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch, buildApiPath, downloadSessionExtensionZip } from '../config.js';
 import { useApi } from '../hooks/useApi';
 import theme from '../theme';
 
 const SCREENSHOT_POLL_MS = 2000;
-/** Poll in-memory live viewport (Nova Act / Lambda) — same endpoint as Jobs table preview */
-const LIVE_FRAME_POLL_MS = 800;
-const VIEWPORT_W = 1280;
-const VIEWPORT_H = 800;
+const NOVA_TRACE_POLL_MS = 1500;
 
 function sessionHostname(url) {
   if (!url || typeof url !== 'string') return null;
@@ -28,16 +25,12 @@ export default function HITLDetail() {
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
   const [screenshotTs, setScreenshotTs] = useState(Date.now());
-  const [typeText, setTypeText] = useState('');
   const [actionLog, setActionLog] = useState([]);
-  const [sending, setSending] = useState(false);
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [screenshotBroken, setScreenshotBroken] = useState(false);
-  /** Object URL from GET /jobs/:id/live-frame — live automation viewport (~1fps during HITL) */
-  const [liveViewportUrl, setLiveViewportUrl] = useState(null);
-  const imgRef = useRef(null);
-  const viewportRef = useRef(null);
+  const [novaTraceText, setNovaTraceText] = useState('');
+  const [novaConsoleUrl, setNovaConsoleUrl] = useState(null);
 
   useEffect(() => {
     setScreenshotBroken(false);
@@ -97,93 +90,41 @@ export default function HITLDetail() {
     const pending = blocker?.status === 'pending';
     const appId = blocker?.applicationId;
     if (!pending || !appId) {
-      setLiveViewportUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      setNovaTraceText('');
+      setNovaConsoleUrl(null);
       return undefined;
     }
-
     let cancelled = false;
-
-    async function pollLiveFrame() {
+    async function pollNova() {
       try {
-        const res = await apiFetch(`/jobs/${appId}/live-frame?t=${Date.now()}`);
+        const [tRes, mRes] = await Promise.all([
+          apiFetch(`/jobs/${appId}/nova-act/trace?t=${Date.now()}`),
+          apiFetch(`/jobs/${appId}/nova-act/run-meta?t=${Date.now()}`),
+        ]);
         if (cancelled) return;
-        if (res.status === 200) {
-          const blob = await res.blob();
-          if (cancelled) return;
-          const url = URL.createObjectURL(blob);
-          setLiveViewportUrl(prev => {
-            if (prev) URL.revokeObjectURL(prev);
-            return url;
-          });
+        if (tRes.ok) {
+          const data = await tRes.json();
+          const lines = Array.isArray(data?.lines) ? data.lines : [];
+          setNovaTraceText(lines.slice(-40).join('\n'));
+        }
+        if (mRes.ok) {
+          const meta = await mRes.json();
+          if (meta?.consoleUrl) setNovaConsoleUrl(meta.consoleUrl);
         }
       } catch {
-        /* offline or API unreachable */
+        /* ignore */
       }
     }
-
-    pollLiveFrame();
-    const interval = setInterval(pollLiveFrame, LIVE_FRAME_POLL_MS);
+    pollNova();
+    const interval = setInterval(pollNova, NOVA_TRACE_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
-      setLiveViewportUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
     };
   }, [blocker?.applicationId, blocker?.status]);
 
   function addLog(msg) {
     setActionLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 50));
-  }
-
-  async function sendAction(action) {
-    setSending(true);
-    try {
-      const res = await apiFetch(`/hitl/${id}/action`, {
-        method: 'POST',
-        body: JSON.stringify(action),
-      });
-      if (!res.ok) {
-        const t = await res.text();
-        addLog(`Error ${res.status}: ${t || res.statusText}`);
-        return;
-      }
-      addLog(`${action.type}${action.x != null ? ` (${action.x},${action.y})` : ''}${action.text ? ` "${action.text}"` : ''}${action.key ? ` [${action.key}]` : ''}`);
-      setTimeout(() => setScreenshotTs(Date.now()), 800);
-    } catch (err) {
-      addLog(`Error: ${err.message}`);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  function handleImageClick(e) {
-    if (!viewportRef.current || blocker?.status !== 'pending') return;
-    // Map clicks to the automation viewport (1280×800). Use the viewport wrapper, not the <img>,
-    // so coordinates stay valid when the screenshot 404s and the image has no height.
-    const rect = viewportRef.current.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    const scaleX = VIEWPORT_W / rect.width;
-    const scaleY = VIEWPORT_H / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
-    sendAction({ type: 'click', x, y });
-  }
-
-  function handleImageScroll(e) {
-    if (blocker?.status !== 'pending') return;
-    e.preventDefault();
-    sendAction({ type: 'scroll', deltaY: e.deltaY });
-  }
-
-  function handleTypeSubmit() {
-    if (!typeText.trim()) return;
-    sendAction({ type: 'type', text: typeText });
-    setTypeText('');
   }
 
   async function handleProceed() {
@@ -240,12 +181,11 @@ export default function HITLDetail() {
 
   const isPending = blocker.status === 'pending';
   const screenshotUrl = `${buildApiPath(`/hitl/${id}/screenshot`)}?t=${screenshotTs}`;
-  const displaySrc = liveViewportUrl || screenshotUrl;
-  const hasLiveViewport = Boolean(liveViewportUrl);
-  const showViewportPlaceholder =
-    !hasLiveViewport && (!blocker.hasScreenshot || screenshotBroken);
+  const displaySrc = screenshotUrl;
+  const showViewportPlaceholder = !blocker.hasScreenshot || screenshotBroken;
   const sessionSiteUrl = blocker.liveUrl || job?.jobLink || '';
   const siteHost = sessionHostname(sessionSiteUrl);
+  const consoleOpenUrl = blocker.consoleUrl || novaConsoleUrl;
   const handleDownloadExtension = async () => {
     setExtensionDlBusy(true);
     try {
@@ -290,84 +230,80 @@ export default function HITLDetail() {
           <View style={styles.browserChrome}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={[styles.urlBar, { flex: 1 }]}>
-                <Text style={styles.urlText} numberOfLines={1}>{blocker.liveUrl || '—'}</Text>
+                <Text style={styles.urlText} numberOfLines={1}>{sessionSiteUrl || '—'}</Text>
               </View>
-              {hasLiveViewport && isPending && (
+              {novaTraceText.length > 0 && isPending && (
                 <View style={styles.liveBadge}>
-                  <Text style={styles.liveBadgeText}>● Live</Text>
+                  <Text style={styles.liveBadgeText}>● Trace</Text>
                 </View>
               )}
             </View>
-            {sending && <View style={styles.loadingBar} />}
           </View>
 
           <div
-            ref={viewportRef}
             style={{
               position: 'relative',
               width: '100%',
-              aspectRatio: `${VIEWPORT_W} / ${VIEWPORT_H}`,
-              cursor: isPending ? 'crosshair' : 'default',
-              overflow: 'hidden',
               borderRadius: '0 0 10px 10px',
               background: '#111',
-              minHeight: 120,
+              minHeight: 200,
             }}
-            onClick={handleImageClick}
-            onWheel={handleImageScroll}
           >
             {showViewportPlaceholder && (
               <div
                 style={{
-                  position: 'absolute',
-                  inset: 0,
-                  zIndex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                   padding: 16,
-                  background: 'rgba(0,0,0,0.75)',
-                  color: '#ccc',
+                  color: '#aaa',
                   fontSize: 13,
                   lineHeight: 1.45,
-                  textAlign: 'center',
                 }}
               >
-                {screenshotBroken && !hasLiveViewport
-                  ? 'Could not load static screenshot from API. Live viewport appears while the apply worker is running (same API as Jobs). Check BACKEND_URL / VITE_API_URL.'
-                  : 'Waiting for live viewport from the Nova Act apply worker. If this persists, the worker may have exited — open Jobs to confirm status.'}
+                No static screenshot for this intervention. Use the AWS Nova Act console for the hosted browser; this panel shows the API trace from your server.
               </div>
             )}
             <img
-              ref={imgRef}
               src={displaySrc}
-              alt="Browser view"
+              alt="Intervention screenshot"
               style={{
                 width: '100%',
-                display: 'block',
+                maxHeight: 280,
+                objectFit: 'contain',
+                display: showViewportPlaceholder ? 'none' : 'block',
                 userSelect: 'none',
-                pointerEvents: 'none',
-                opacity: showViewportPlaceholder ? 0 : 1,
               }}
               draggable={false}
-              onLoad={() => {
-                if (!hasLiveViewport) setScreenshotBroken(false);
-              }}
-              onError={() => {
-                if (!hasLiveViewport) setScreenshotBroken(true);
-              }}
+              onLoad={() => setScreenshotBroken(false)}
+              onError={() => setScreenshotBroken(true)}
             />
+            {isPending && novaTraceText.length > 0 && (
+              <ScrollView
+                style={{ maxHeight: 220, padding: 10, backgroundColor: '#0a0a0a' }}
+                nestedScrollEnabled
+              >
+                <Text style={{ color: '#9d9', fontSize: 11, fontFamily: 'monospace' }}>
+                  {novaTraceText}
+                </Text>
+              </ScrollView>
+            )}
             {!isPending && (
               <div style={{
-                position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
+                padding: 24, background: 'rgba(0,0,0,0.5)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <span style={{ color: '#fff', fontSize: 20, fontWeight: 700 }}>
+                <span style={{ color: '#fff', fontSize: 18, fontWeight: 700 }}>
                   {blocker.status === 'resolved' ? 'Automation Resumed' : 'Intervention Ended'}
                 </span>
               </div>
             )}
           </div>
+          {isPending && consoleOpenUrl && (
+            <TouchableOpacity
+              style={[styles.sessionBtnPrimary, { marginTop: 10 }]}
+              onPress={() => window.open(consoleOpenUrl, '_blank', 'noopener,noreferrer')}
+            >
+              <Text style={styles.sessionBtnPrimaryText}>Open AWS Nova Act console</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.controlPane}>
@@ -412,49 +348,9 @@ export default function HITLDetail() {
               </View>
 
               <View style={styles.controlSection}>
-                <Text style={styles.controlLabel}>Type text</Text>
-                <View style={styles.typeRow}>
-                  <TextInput
-                    style={styles.typeInput}
-                    value={typeText}
-                    onChangeText={setTypeText}
-                    placeholder="Type text and press Send..."
-                    placeholderTextColor={theme.colors.textMuted}
-                    onSubmitEditing={handleTypeSubmit}
-                  />
-                  <TouchableOpacity style={styles.sendBtn} onPress={handleTypeSubmit}>
-                    <Text style={styles.sendBtnText}>Send</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.controlSection}>
-                <Text style={styles.controlLabel}>Key press</Text>
-                <View style={styles.keyRow}>
-                  {['Enter', 'Tab', 'Escape', 'Backspace'].map(key => (
-                    <TouchableOpacity key={key} style={styles.keyBtn} onPress={() => sendAction({ type: 'press', key })}>
-                      <Text style={styles.keyBtnText}>{key}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.controlSection}>
-                <Text style={styles.controlLabel}>Scroll</Text>
-                <View style={styles.keyRow}>
-                  <TouchableOpacity style={styles.keyBtn} onPress={() => sendAction({ type: 'scroll', deltaY: -300 })}>
-                    <Text style={styles.keyBtnText}>↑ Up</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.keyBtn} onPress={() => sendAction({ type: 'scroll', deltaY: 300 })}>
-                    <Text style={styles.keyBtnText}>↓ Down</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.controlSection}>
-                <TouchableOpacity style={styles.keyBtn} onPress={() => sendAction({ type: 'clear' })}>
-                  <Text style={styles.keyBtnText}>Clear Field</Text>
-                </TouchableOpacity>
+                <Text style={styles.sessionBody}>
+                  Remote click/type into the automation browser is disabled for AWS Nova Act IAM runs. Complete CAPTCHA or login in your own browser (session helper below), use the AWS console for the managed session, then tap Proceed.
+                </Text>
               </View>
 
               <View style={styles.actionButtons}>
@@ -480,7 +376,7 @@ export default function HITLDetail() {
             <Text style={styles.controlLabel}>Action Log</Text>
             <View style={styles.logBox}>
               {actionLog.length === 0 ? (
-                <Text style={styles.logEmpty}>Click on the browser, type text, or press keys to interact.</Text>
+                <Text style={styles.logEmpty}>Proceed / Skip actions are logged here.</Text>
               ) : (
                 actionLog.map((msg, i) => (
                   <Text key={i} style={styles.logLine}>{msg}</Text>

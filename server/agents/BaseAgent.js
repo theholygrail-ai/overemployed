@@ -64,8 +64,13 @@ export function buildMessage(event, data = {}) {
       return `Memory updated: ${d.key || ''}`;
     case 'apply_start':
       return `Applying to ${d.roleTitle || d.applicationId || 'application'}`;
-    case 'apply_progress':
-      return `Apply: ${d.message || ''}`;
+    case 'apply_progress': {
+      const think = d.thinking
+        ? ` — "${String(d.thinking).slice(0, 140)}${String(d.thinking).length > 140 ? '...' : ''}"`
+        : '';
+      const phase = d.phase ? ` [${d.phase}]` : '';
+      return `Apply${phase}: ${d.message || ''}${think}`;
+    }
     case 'apply_blocked':
       return `Apply paused — intervention required (${d.reason || ''})`;
     case 'apply_resumed':

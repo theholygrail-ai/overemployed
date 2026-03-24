@@ -19,6 +19,7 @@ import { WebSocketServer } from 'ws';
 import { createApp } from './app.js';
 import { startScheduler } from './services/scheduler.js';
 import OrchestratorAgent from './agents/OrchestratorAgent.js';
+import { resolveRunCriteria } from './services/jobSearchCriteria.js';
 
 const PORT = process.env.PORT || 4900;
 const server = http.createServer();
@@ -50,7 +51,8 @@ server.on('request', app);
 startScheduler(async () => {
   try {
     const orchestrator = new OrchestratorAgent({ broadcast });
-    await orchestrator.run();
+    const criteria = await resolveRunCriteria();
+    await orchestrator.run(criteria);
   } catch (err) {
     console.error('[SCHEDULER RUN ERROR]', err.message);
   }

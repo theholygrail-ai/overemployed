@@ -1,4 +1,4 @@
-# API server for AWS EC2 / Docker Compose (not Vercel)
+# API server for AWS EC2 / Docker Compose (not Vercel). Apply uses Node + Playwright + Nova Act control plane (us-east-1 IAM).
 FROM node:20-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,8 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
-    python3 \
-    python3-pip \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
@@ -30,11 +28,7 @@ COPY package.json package-lock.json ./
 
 RUN npm ci --omit=dev
 
-# Nova Act runtime for apply (Python SDK + browser install per official docs)
-RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip \
-  && python3 -m pip install --break-system-packages --no-cache-dir "nova-act>=3.0" \
-  && python3 -c "import nova_act; print('nova_act_ok')"
-RUN python3 -m playwright install chromium --with-deps || python3 -m playwright install chromium || true
+RUN npx playwright install chromium --with-deps || npx playwright install chromium || true
 
 COPY server ./server
 COPY context ./context

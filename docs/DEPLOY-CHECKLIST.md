@@ -50,8 +50,9 @@ Use this when wiring **Vercel (frontend)** + **AWS API (Lambda Zip or EC2)** + *
 | `API_KEY` | Lambda / EC2 | Shared secret; must match `VITE_API_KEY` when enabled. |
 | `FRONTEND_URL` / `FRONTEND_URLS` | Lambda / EC2 | CORS allowlist; comma-separated Vercel URLs. |
 | `DYNAMODB_TABLE_NAME` | Lambda / EC2 | Applications table. |
-| `DATA_S3_BUCKET` | Lambda / EC2 | Shared JSON state (`run-state`, memory, HITL, etc.). |
-| `GROQ_API_KEY` | Lambda / EC2 | LLM for agents. |
+| `DATA_S3_BUCKET` | Lambda / EC2 | Shared JSON state (`run-state`, memory, HITL, etc.) and S3 uploads (CV presign for Nova Act). |
+| `NOVA_ACT_WORKFLOW_DEFINITION_NAME` | Lambda / EC2 | Registered Nova Act workflow in **us-east-1** (apply). |
+| `GROQ_API_KEY` | Lambda / EC2 | Optional Groq (e.g. session-cookie extract); not used for apply. |
 | `ORCHESTRATOR_FUNCTION_NAME` / worker | HTTP Lambda env | Name of worker Lambda for async invoke (if using worker pattern). |
 | `LINKEDIN_*` | Lambda / EC2 | OAuth + scrape configuration. |
 

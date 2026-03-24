@@ -31,7 +31,14 @@ function normalizeJob(job) {
 export async function scrapeRemoteOK(keywords) {
   try {
     const { data } = await axios.get(API_URL, {
-      headers: { 'User-Agent': 'OverEmployed Job Scraper' },
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        Referer: 'https://remoteok.com/',
+      },
+      timeout: 20000,
     });
 
     const jobs = Array.isArray(data) ? data.slice(1) : [];

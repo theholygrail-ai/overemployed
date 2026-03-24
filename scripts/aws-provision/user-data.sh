@@ -45,13 +45,10 @@ with open('$INSTALL/.env', 'w', encoding='utf-8') as f:
 "
 rm -f /tmp/overemployed-secret.json
 
-grep -q '^NOVA_ACT_HOST_DATA_PATH=' "$INSTALL/.env" || echo "NOVA_ACT_HOST_DATA_PATH=/opt/overemployed/data" >> "$INSTALL/.env"
-grep -q '^NOVA_ACT_USE_DOCKER=' "$INSTALL/.env" || echo "NOVA_ACT_USE_DOCKER=true" >> "$INSTALL/.env"
 grep -q '^AWS_REGION=' "$INSTALL/.env" || echo "AWS_REGION=${REGION}" >> "$INSTALL/.env"
 grep -q '^PORT=' "$INSTALL/.env" || echo "PORT=4900" >> "$INSTALL/.env"
 
 cd "$INSTALL"
-docker compose --profile nova-act build nova-act
 docker compose up -d --build api
 
 chown -R ec2-user:ec2-user "$INSTALL" || true

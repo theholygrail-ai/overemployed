@@ -34,7 +34,10 @@ Set parameters:
 
 | Parameter | Description |
 |-----------|-------------|
-| `GroqApiKey` | Required for CV/scoring |
+| `GroqApiKey` | Optional Groq features (e.g. session-cookie extract); not used for apply |
+| `NovaActWorkflowDefinitionName` | Registered Nova Act workflow in **us-east-1** (required for apply on Lambda/EC2) |
+| `NovaActModelId` | Passed to `CreateWorkflowRun` (default `nova-act-latest`) |
+| `NovaActApiKey` | Optional Playground key; IAM apply does not require it |
 | `AdzunaAppId` / `AdzunaAppKey` | Optional job source |
 | `FrontendOrigins` | Your Vercel URL(s), comma-separated, for CORS |
 | `ApiKey` | Optional; if set, must match `VITE_API_KEY` on Vercel |
@@ -62,7 +65,6 @@ After deploy, note **HttpApiUrl** from CloudFormation outputs (or, if you use **
 ### Session cookie AI extract (Settings UI)
 
 `POST /api/settings/session-cookies/extract` uses **Groq** (`openai/gpt-oss-120b` by default) with `GROQ_API_KEY` from Lambda env. Override model with env `GROQ_SESSION_EXTRACT_MODEL` if needed.
-- `VITE_WS_URL` — leave unset or set `VITE_DISABLE_WS=true` on Vercel (WebSockets are not exposed on Lambda Function URL; the UI falls back to polling).
 
 ## 4. Vercel
 
@@ -74,12 +76,14 @@ VITE_DISABLE_WS=true
 VITE_API_KEY=<same as ApiKey parameter if you set one>
 ```
 
+- `VITE_WS_URL` — leave unset or set `VITE_DISABLE_WS=true` (WebSockets are not exposed on Lambda Function URL; the UI falls back to polling).
+
 Redeploy the frontend. The deployment URL is shown in the Vercel dashboard (e.g. `https://overemployed.vercel.app`).
 
 ## Architecture notes
 
 - **Long runs**: `POST /api/agents/run` returns immediately and invokes the **Orchestrator** Lambda asynchronously. Poll `GET /api/agents/status`.
-- **Apply**: Uses synchronous Lambda invoke (still within 15 minutes).
+- **Apply**: Uses synchronous Lambda invoke (still within 15 minutes). Nova Act IAM apply runs **Playwright in-process**; the default Lambda image does **not** enable this — apply returns a clear error unless you run the API on **EC2/Docker** or build a Chromium-capable Lambda image and set `NOVA_ACT_ALLOW_LAMBDA_PLAYWRIGHT=true`.
 - **Cron**: `node-cron` is disabled in Lambda (`ENABLE_NODE_CRON=false`). Use **EventBridge** to invoke `OrchestratorFunction` on a schedule if needed (add target in console or extend the template).
 - **HITL / screenshots**: Stored under `/tmp` in the Lambda instance; not durable across cold starts. For production HITL persistence, extend storage to S3/DynamoDB.
 

@@ -5,6 +5,7 @@ import { requireApiKey } from '../middleware/apiKey.js';
 import { getRunState, setRunState } from '../services/runState.js';
 import { updateApplicationStatus } from '../services/dynamodb.js';
 import { shouldUseWorkerLambda, invokeOrchestratorAsync } from '../services/workerInvoke.js';
+import { resolveRunCriteria } from '../services/jobSearchCriteria.js';
 
 export function createAgentRoutes(broadcast) {
   const router = Router();
@@ -26,7 +27,10 @@ export function createAgentRoutes(broadcast) {
           status: 'running',
           message: 'Pipeline started — searching for jobs',
         });
-        await invokeOrchestratorAsync({ action: 'run', criteria: req.body?.criteria });
+        await invokeOrchestratorAsync({
+          action: 'run',
+          criteria: req.body?.criteria,
+        });
         return res.json({
           status: 'started',
           message: 'Pipeline started on worker Lambda. Poll GET /api/agents/status.',
@@ -56,7 +60,7 @@ export function createAgentRoutes(broadcast) {
     });
 
     try {
-      const { criteria } = req.body || {};
+      const criteria = await resolveRunCriteria(req.body?.criteria);
       const orchestrator = new OrchestratorAgent({ broadcast });
       const lastRunResult = await orchestrator.run(criteria);
 
