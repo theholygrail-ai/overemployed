@@ -27,12 +27,23 @@ import time
 import urllib.error
 import urllib.request
 
-MAX_PLANNER_STEPS = 28
+def _int_env(name: str, default: str) -> int:
+    try:
+        return int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return int(float(default))
+
+
+MAX_PLANNER_STEPS = _int_env("NOVA_ACT_MAX_PLANNER_STEPS", "10")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_PLANNER_MODEL = "openai/gpt-oss-120b"
 # Matches amazon-agi-labs/nova-act-samples NovaActClient.DEFAULT_MODEL_ID; see model version guide in AWS Nova Act user guide.
 DEFAULT_NOVA_ACT_MODEL_ID = "nova-act-latest"
 TAILORED_CV_MAX = 14000
+ACT_TIMEOUT_S = _int_env("NOVA_ACT_STEP_TIMEOUT_S", "90")
+ACT_MAX_STEPS = _int_env("NOVA_ACT_STEP_MAX_STEPS", "8")
+LOGIN_ACT_MAX_STEPS = _int_env("NOVA_ACT_LOGIN_MAX_STEPS", "6")
+MAX_CONSECUTIVE_ACT_ERRORS = _int_env("NOVA_ACT_MAX_CONSECUTIVE_ERRORS", "2")
 
 
 def send_event(event_type: str, **kwargs) -> None:
@@ -353,6 +364,7 @@ def _run_apply_session(
         send_progress(f"Navigation note: {e}")
 
     last_summary = "Session started."
+    consecutive_act_errors = 0
     step = 0
 
     while step < MAX_PLANNER_STEPS:
@@ -432,6 +444,7 @@ What should the browser agent do next?"""
                 return
             send_progress("Resuming after human intervention")
             last_summary = "User resolved blocker; continuing."
+            consecutive_act_errors = 0
             continue
 
         if plan.get("done"):
@@ -468,20 +481,46 @@ What should the browser agent do next?"""
             except Exception:
                 host = ""
             pwd = _password_for_host(credentials_by_host, host)
-            nova.act(instruction, max_steps=12)
+            nova.act(instruction, max_steps=LOGIN_ACT_MAX_STEPS, timeout=ACT_TIMEOUT_S)
             maybe_type_password(nova, pwd)
             last_summary = f"Phase {plan.get('phase')}: login step with keyboard password entry attempted."
+            consecutive_act_errors = 0
             continue
 
         try:
-            act_result = nova.act(instruction, max_steps=18)
+            act_result = nova.act(instruction, max_steps=ACT_MAX_STEPS, timeout=ACT_TIMEOUT_S)
             meta = getattr(act_result, "metadata", None)
             steps = getattr(meta, "num_steps_executed", None) if meta else None
             last_summary = f"Phase {plan.get('phase')}: completed act ({steps or '?'} steps)."
             send_progress(last_summary, nova.page)
+            consecutive_act_errors = 0
         except Exception as e:
+            consecutive_act_errors += 1
             last_summary = f"Act error: {e}"
             send_progress(last_summary, nova.page)
+            if consecutive_act_errors >= MAX_CONSECUTIVE_ACT_ERRORS:
+                try:
+                    shot = nova.page.screenshot()
+                    b64 = base64.b64encode(shot).decode() if shot else None
+                except Exception:
+                    b64 = None
+                send_blocker(
+                    f"Automation stalled after repeated errors ({consecutive_act_errors}): {e}",
+                    b64,
+                    getattr(nova.page, "url", None),
+                )
+                cmd_line = read_stdin_line_with_live_frames(
+                    nova, str(command.get("applicationId") or "").strip() or None
+                )
+                try:
+                    ctrl = json.loads(cmd_line) if cmd_line else {}
+                except json.JSONDecodeError:
+                    ctrl = {}
+                if ctrl.get("cmd") != "resume":
+                    send_error("Blocked: intervention skipped or aborted")
+                    return
+                send_progress("Resuming after human intervention")
+                consecutive_act_errors = 0
 
     send_error("Exceeded maximum planner steps without completion")
 
