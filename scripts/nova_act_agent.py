@@ -2,12 +2,15 @@
 """
 Nova Act + Groq planner loop for job applications.
 
-Uses the official Amazon **Nova Act** Python SDK (`pip install nova-act`) — browser automation
-API documented at https://nova.amazon.com/dev/documentation (product: Nova Act).
+Uses the official Amazon **Nova Act** Python SDK (`pip install nova-act`).
+
+Configuration follows the SDK and samples (not ad-hoc defaults):
+- https://nova.amazon.com/dev/documentation — product docs
+- https://github.com/aws/nova-act — SDK (Workflow + model_id, SecurityOptions globs, tty, go_to_url)
+- https://github.com/amazon-agi-labs/nova-act-samples — examples (e.g. API key + `nova-act-latest`)
 
 This script is the stdin/stdout worker spawned by server/services/automation/novaActBridge.js
-(Docker or WSL). It is not a replacement for Nova Act; it orchestrates Groq planning + Nova Act
-`act` / `act_get` calls and HITL blocker events.
+(Docker or WSL). It orchestrates Groq planning + Nova Act `act` / `act_get` calls and HITL blocker events.
 
 Protocol: first stdin line = JSON command; stdout = NDJSON events.
 After a blocker event, read one stdin line: {"cmd":"resume"} or {"cmd":"skip"}.
@@ -18,6 +21,7 @@ import base64
 import json
 import os
 import re
+import select
 import sys
 import time
 import urllib.error
@@ -26,6 +30,8 @@ import urllib.request
 MAX_PLANNER_STEPS = 28
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_PLANNER_MODEL = "openai/gpt-oss-120b"
+# Matches amazon-agi-labs/nova-act-samples NovaActClient.DEFAULT_MODEL_ID; see model version guide in AWS Nova Act user guide.
+DEFAULT_NOVA_ACT_MODEL_ID = "nova-act-latest"
 TAILORED_CV_MAX = 14000
 
 
@@ -35,7 +41,17 @@ def send_event(event_type: str, **kwargs) -> None:
 
 
 _last_prog_frame_ts: float = 0.0
-PROG_FRAME_MIN_INTERVAL_S = 6.0
+
+
+def _float_env(name: str, default: str) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+PROG_FRAME_MIN_INTERVAL_S = _float_env("NOVA_ACT_PROGRESS_FRAME_INTERVAL_S", "2")
+BLOCKER_LIVE_FRAME_INTERVAL_S = _float_env("NOVA_ACT_BLOCKER_LIVE_INTERVAL_S", "1")
 
 
 def send_progress(message: str, page=None) -> None:
@@ -73,6 +89,30 @@ def send_error(message: str) -> None:
 def read_stdin_line() -> str:
     line = sys.stdin.readline()
     return line.strip() if line else ""
+
+
+def read_stdin_line_with_live_frames(nova, application_id: str | None) -> str:
+    """
+    After a blocker is raised, wait for resume/skip while streaming viewport PNGs as live_frame
+    events (same Playwright page as Nova Act — closest we get to a remote 'live browser' without CDP).
+    Uses select() so we stay on the main thread (Playwright sync API is not thread-safe).
+    """
+    if not application_id:
+        return read_stdin_line()
+    if sys.platform == "win32":
+        return read_stdin_line()
+    while True:
+        readable, _, _ = select.select([sys.stdin], [], [], BLOCKER_LIVE_FRAME_INTERVAL_S)
+        if readable:
+            line = sys.stdin.readline()
+            return line.strip() if line else ""
+        try:
+            raw = nova.page.screenshot()
+            if raw:
+                b64 = base64.b64encode(raw).decode()
+                send_event("live_frame", applicationId=application_id, screenshot=b64)
+        except Exception:
+            pass
 
 
 def groq_chat(messages: list, api_key: str, model: str) -> str:
@@ -162,19 +202,32 @@ def apply_cookies_to_context(nova, cookies: list) -> int:
     return len(pw)
 
 
-def collect_upload_allow_paths(command: dict) -> list:
-    paths = []
+def collect_upload_allow_patterns(command: dict) -> list:
+    """Glob patterns for SecurityOptions.allowed_file_upload_paths (SDK requires e.g. '/dir/*')."""
+    dirs = []
     for key in ("pdfPath", "docxPath", "cvPath"):
         p = command.get(key)
         if p and isinstance(p, str) and p.strip():
-            paths.append(os.path.dirname(p.strip()))
+            dirs.append(os.path.dirname(p.strip()))
     seen = set()
-    uniq = []
-    for d in paths:
-        if d and d not in seen:
-            seen.add(d)
-            uniq.append(d)
-    return uniq
+    patterns = []
+    for d in dirs:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        d = d.rstrip("/\\")
+        patterns.append(f"{d}/*")
+    return patterns
+
+
+def resolve_nova_model_id(command: dict) -> str:
+    for candidate in (command.get("novaActModelId"), os.environ.get("NOVA_ACT_MODEL_ID")):
+        if candidate is None:
+            continue
+        s = str(candidate).strip()
+        if s:
+            return s
+    return DEFAULT_NOVA_ACT_MODEL_ID
 
 
 def maybe_type_password(nova, password: str | None) -> None:
@@ -202,7 +255,7 @@ def _password_for_host(credentials_by_host: dict, hostname: str) -> str | None:
 
 def run_apply(command: dict) -> None:
     try:
-        from nova_act import NovaAct, SecurityOptions, BOOL_SCHEMA
+        from nova_act import NovaAct, SecurityOptions, BOOL_SCHEMA, Workflow
     except ImportError:
         send_error("nova-act package not installed. Run: pip install nova-act")
         return
@@ -235,43 +288,78 @@ def run_apply(command: dict) -> None:
     cookies = command.get("sessionCookies") or []
     credentials_by_host = command.get("siteCredentials") or {}
     headless = bool(command.get("headless", False))
+    model_id = resolve_nova_model_id(command)
 
-    upload_dirs = collect_upload_allow_paths(command)
+    upload_patterns = collect_upload_allow_patterns(command)
     security_options = None
-    if upload_dirs:
-        security_options = SecurityOptions(allowed_file_upload_paths=upload_dirs)
+    if upload_patterns:
+        security_options = SecurityOptions(allowed_file_upload_paths=upload_patterns)
 
+    go_to_url_timeout = None
+    raw_gtu = os.environ.get("NOVA_ACT_GO_TO_URL_TIMEOUT")
+    if raw_gtu and str(raw_gtu).strip():
+        try:
+            go_to_url_timeout = int(float(raw_gtu))
+        except (TypeError, ValueError):
+            pass
+
+    # Workflow + explicit model_id: same pattern as nova-act-samples (NovaActClient / @workflow).
+    # NovaAct without workflow uses an internal managed Workflow(model_id="nova-act-preview").
     nova_kwargs = {
         "starting_page": url,
-        "nova_act_api_key": nova_key,
         "headless": headless,
+        "tty": False,
     }
     if security_options:
         nova_kwargs["security_options"] = security_options
+    if go_to_url_timeout is not None:
+        nova_kwargs["go_to_url_timeout"] = go_to_url_timeout
 
     name = str(profile.get("name") or "")
     email = str(profile.get("email") or "")
     phone = str(profile.get("phone") or "")
 
-    send_progress(f"Opening {url}")
+    send_progress(f"Opening {url} (Nova Act model: {model_id})")
 
-    with NovaAct(**nova_kwargs) as nova:
-        n = apply_cookies_to_context(nova, cookies)
-        if n:
-            send_progress(f"Injected {n} session cookie(s) into browser context")
-        try:
-            nova.go_to_url(url)
-        except Exception as e:
-            send_progress(f"Navigation note: {e}")
+    with Workflow(model_id=model_id, nova_act_api_key=nova_key) as _wf:
+        nova_kwargs["workflow"] = _wf
+        with NovaAct(**nova_kwargs) as nova:
+            _run_apply_session(nova, command, cookies, credentials_by_host, url, name, email, phone, pdf_path, docx_path, tailored, company, role, groq_key, planner_model)
 
-        last_summary = "Session started."
-        step = 0
 
-        while step < MAX_PLANNER_STEPS:
-            step += 1
-            send_progress(f"Planner step {step}/{MAX_PLANNER_STEPS}", nova.page)
+def _run_apply_session(
+    nova,
+    command: dict,
+    cookies: list,
+    credentials_by_host: dict,
+    url: str,
+    name: str,
+    email: str,
+    phone: str,
+    pdf_path: str,
+    docx_path: str,
+    tailored: str,
+    company: str,
+    role: str,
+    groq_key: str,
+    planner_model: str,
+) -> None:
+    n = apply_cookies_to_context(nova, cookies)
+    if n:
+        send_progress(f"Injected {n} session cookie(s) into browser context")
+    try:
+        nova.go_to_url(url)
+    except Exception as e:
+        send_progress(f"Navigation note: {e}")
 
-            sys_prompt = """You orchestrate a browser agent (Nova Act) applying for a job.
+    last_summary = "Session started."
+    step = 0
+
+    while step < MAX_PLANNER_STEPS:
+        step += 1
+        send_progress(f"Planner step {step}/{MAX_PLANNER_STEPS}", nova.page)
+
+        sys_prompt = """You orchestrate a browser agent (Nova Act) applying for a job.
 Return ONLY a JSON object with keys:
 - "next_instruction": string — one clear imperative for the browser agent (one focused action or small group).
 - "phase": one of "explore" | "login" | "fill" | "upload" | "review" | "submit" | "verify"
@@ -286,7 +374,7 @@ Rules:
 - Keep instructions short and specific to the current page.
 - If already on a confirmation/thank-you page, set phase verify and done true with next_instruction describing verification."""
 
-            user_content = f"""Job: {role} at {company}
+        user_content = f"""Job: {role} at {company}
 URL: {url}
 Applicant name: {name}
 Email: {email}
@@ -303,97 +391,99 @@ Last agent result summary: {last_summary}
 
 What should the browser agent do next?"""
 
-            try:
-                raw = groq_chat(
-                    [
-                        {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
-                    groq_key,
-                    planner_model,
-                )
-                plan = extract_json_object(raw)
-            except Exception as e:
-                send_progress(f"Planner error, using fallback explore step: {e}")
-                plan = {
-                    "next_instruction": "Scroll through the page and locate the job application or Easy Apply entry point.",
-                    "phase": "explore",
-                    "needs_human": False,
-                    "human_reason": None,
-                    "use_password_keyboard": False,
-                    "done": False,
-                }
+        try:
+            raw = groq_chat(
+                [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                groq_key,
+                planner_model,
+            )
+            plan = extract_json_object(raw)
+        except Exception as e:
+            send_progress(f"Planner error, using fallback explore step: {e}")
+            plan = {
+                "next_instruction": "Scroll through the page and locate the job application or Easy Apply entry point.",
+                "phase": "explore",
+                "needs_human": False,
+                "human_reason": None,
+                "use_password_keyboard": False,
+                "done": False,
+            }
 
-            if plan.get("needs_human"):
-                reason = plan.get("human_reason") or "Human verification or CAPTCHA may be required"
+        if plan.get("needs_human"):
+            reason = plan.get("human_reason") or "Human verification or CAPTCHA may be required"
+            try:
+                shot = nova.page.screenshot()
+                b64 = base64.b64encode(shot).decode() if shot else None
+            except Exception:
+                b64 = None
+            send_blocker(reason, b64, nova.page.url)
+            cmd_line = read_stdin_line_with_live_frames(
+                nova, str(command.get("applicationId") or "").strip() or None
+            )
+            try:
+                ctrl = json.loads(cmd_line) if cmd_line else {}
+            except json.JSONDecodeError:
+                ctrl = {}
+            if ctrl.get("cmd") != "resume":
+                send_error("Blocked: intervention skipped or aborted")
+                return
+            send_progress("Resuming after human intervention")
+            last_summary = "User resolved blocker; continuing."
+            continue
+
+        if plan.get("done"):
+            try:
+                result = nova.act_get(
+                    "Is there clear evidence on this page that the job application was submitted successfully "
+                    "(thank you, confirmation number, application received)?",
+                    schema=BOOL_SCHEMA,
+                )
+                ok = bool(result.parsed_response)
+            except Exception as e:
+                send_progress(f"Verification act_get failed: {e}")
+                ok = False
+            if ok:
                 try:
                     shot = nova.page.screenshot()
-                    b64 = base64.b64encode(shot).decode() if shot else None
+                    sb64 = base64.b64encode(shot).decode() if shot else None
                 except Exception:
-                    b64 = None
-                send_blocker(reason, b64, nova.page.url)
-                cmd_line = read_stdin_line()
-                try:
-                    ctrl = json.loads(cmd_line) if cmd_line else {}
-                except json.JSONDecodeError:
-                    ctrl = {}
-                if ctrl.get("cmd") != "resume":
-                    send_error("Blocked: intervention skipped or aborted")
-                    return
-                send_progress("Resuming after human intervention")
-                last_summary = "User resolved blocker; continuing."
-                continue
+                    sb64 = None
+                send_success("Application submitted (verified)", screenshot_b64=sb64)
+            else:
+                send_error("Could not verify application submission on screen")
+            return
 
-            if plan.get("done"):
-                try:
-                    result = nova.act_get(
-                        "Is there clear evidence on this page that the job application was submitted successfully "
-                        "(thank you, confirmation number, application received)?",
-                        schema=BOOL_SCHEMA,
-                    )
-                    ok = bool(result.parsed_response)
-                except Exception as e:
-                    send_progress(f"Verification act_get failed: {e}")
-                    ok = False
-                if ok:
-                    try:
-                        shot = nova.page.screenshot()
-                        sb64 = base64.b64encode(shot).decode() if shot else None
-                    except Exception:
-                        sb64 = None
-                    send_success("Application submitted (verified)", screenshot_b64=sb64)
-                else:
-                    send_error("Could not verify application submission on screen")
-                return
+        instruction = str(plan.get("next_instruction") or "").strip()
+        if not instruction:
+            instruction = "Summarize what you see on the page and the main call-to-action for applying."
 
-            instruction = str(plan.get("next_instruction") or "").strip()
-            if not instruction:
-                instruction = "Summarize what you see on the page and the main call-to-action for applying."
-
-            if plan.get("use_password_keyboard"):
-                try:
-                    from urllib.parse import urlparse
-
-                    host = urlparse(nova.page.url).hostname or ""
-                except Exception:
-                    host = ""
-                pwd = _password_for_host(credentials_by_host, host)
-                nova.act(instruction, max_steps=12)
-                maybe_type_password(nova, pwd)
-                last_summary = f"Phase {plan.get('phase')}: login step with keyboard password entry attempted."
-                continue
-
+        if plan.get("use_password_keyboard"):
             try:
-                act_result = nova.act(instruction, max_steps=18)
-                meta = getattr(act_result, "metadata", None)
-                steps = getattr(meta, "num_steps_executed", None) if meta else None
-                last_summary = f"Phase {plan.get('phase')}: completed act ({steps or '?'} steps)."
-                send_progress(last_summary, nova.page)
-            except Exception as e:
-                last_summary = f"Act error: {e}"
-                send_progress(last_summary, nova.page)
+                from urllib.parse import urlparse
 
-        send_error("Exceeded maximum planner steps without completion")
+                host = urlparse(nova.page.url).hostname or ""
+            except Exception:
+                host = ""
+            pwd = _password_for_host(credentials_by_host, host)
+            nova.act(instruction, max_steps=12)
+            maybe_type_password(nova, pwd)
+            last_summary = f"Phase {plan.get('phase')}: login step with keyboard password entry attempted."
+            continue
+
+        try:
+            act_result = nova.act(instruction, max_steps=18)
+            meta = getattr(act_result, "metadata", None)
+            steps = getattr(meta, "num_steps_executed", None) if meta else None
+            last_summary = f"Phase {plan.get('phase')}: completed act ({steps or '?'} steps)."
+            send_progress(last_summary, nova.page)
+        except Exception as e:
+            last_summary = f"Act error: {e}"
+            send_progress(last_summary, nova.page)
+
+    send_error("Exceeded maximum planner steps without completion")
 
 
 def main() -> None:

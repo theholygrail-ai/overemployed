@@ -86,12 +86,14 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
   const {
     onProgress,
     onBlocker,
+    onLiveFrame,
     knowledgePack,
     sessionCookies = [],
     liAtCookie,
     siteCredentials,
     groqApiKey,
     novaActApiKey,
+    novaActModelId,
     plannerModel,
     headless,
   } = options;
@@ -122,8 +124,10 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
     siteCredentials: siteCredentials && typeof siteCredentials === 'object' ? siteCredentials : {},
     groqApiKey: groqApiKey || process.env.GROQ_API_KEY || '',
     novaActApiKey: novaActApiKey || process.env.NOVA_ACT_API_KEY || '',
+    novaActModelId: novaActModelId || process.env.NOVA_ACT_MODEL_ID || '',
     plannerModel: plannerModel || process.env.GROQ_NOVA_PLANNER_MODEL || '',
     headless: Boolean(headless),
+    applicationId: knowledgePack?.applicationId || null,
   };
 
   const firstLine = JSON.stringify(command) + '\n';
@@ -153,6 +157,8 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
       `GROQ_API_KEY=${groqApiKey || process.env.GROQ_API_KEY || ''}`,
       '-e',
       `NOVA_ACT_API_KEY=${novaActApiKey || process.env.NOVA_ACT_API_KEY || ''}`,
+      '-e',
+      `NOVA_ACT_MODEL_ID=${novaActModelId || process.env.NOVA_ACT_MODEL_ID || ''}`,
       DOCKER_IMAGE,
     ];
   } else {
@@ -217,6 +223,17 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
             const shot = event.screenshot ? Buffer.from(event.screenshot, 'base64') : null;
             if (shot) onProgress?.(msg, shot);
             else onProgress?.(msg);
+            break;
+          }
+
+          case 'live_frame': {
+            const appId = event.applicationId;
+            const shot = event.screenshot ? Buffer.from(event.screenshot, 'base64') : null;
+            if (appId && shot) {
+              blockerChain = blockerChain.then(() => {
+                onLiveFrame?.(String(appId), shot);
+              });
+            }
             break;
           }
 
