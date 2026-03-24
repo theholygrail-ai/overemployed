@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "OverEmployed Session Helper",
+  "version": "1.0.0",
+  "description": "Sync browser cookies to OverEmployed for job-site automation (LinkedIn, ATS, careers sites).",
+  "permissions": ["cookies", "storage", "activeTab", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sync session"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

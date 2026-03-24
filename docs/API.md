@@ -66,6 +66,16 @@ The Vercel SPA can send the same secret via `VITE_API_KEY` (build-time env) so t
 | GET | `/api/auth/linkedin/status` | Connection + LinkedIn scrape hint |
 | DELETE | `/api/auth/linkedin` | Clear stored session |
 
+## Session cookies (automation)
+
+Stored in operator memory (`memory.json` / S3). Applied with `page.setCookie` / Playwright `addCookies` **before** navigating to the job URL.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings/session-cookies` | `{ configured, cookieCount, updatedAt }` — no raw values |
+| POST | `/api/settings/session-cookies` | Body `{ cookies: string \| array, defaultDomain?: string }`. JSON array: `[{ name, value, domain, path?, ... }]`. Or Cookie-header string `a=b; c=d` with `defaultDomain` e.g. `.adzuna.com` |
+| DELETE | `/api/settings/session-cookies` | Revoke all stored session cookies |
+
 ## Profile & artifacts
 
 | Method | Path | Description |

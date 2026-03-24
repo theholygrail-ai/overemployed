@@ -50,6 +50,10 @@ Deploy the API with **AWS SAM** (Lambda container images + **Lambda Function URL
 
 Full steps: [`docs/DEPLOY-AWS-SERVERLESS.md`](docs/DEPLOY-AWS-SERVERLESS.md).
 
+**Zip Lambdas (AWS CLI only, no SAM):** If your functions are `PackageType: Zip` (e.g. `overemployed-http-api` + `overemployed-worker`), build and deploy with:
+
+`npm run deploy:lambda` (runs [`scripts/deploy-lambda-aws-cli.ps1`](scripts/deploy-lambda-aws-cli.ps1) — uploads to S3 if the zip is over 50MB, then `aws lambda update-function-code`).
+
 The **Vercel deployment URL** is shown in your Vercel project after import (e.g. `https://<project>.vercel.app`). It is not fixed in this repo.
 
 ---

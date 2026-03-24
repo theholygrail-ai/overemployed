@@ -1,0 +1,12 @@
+{
+  "commands": [
+    "cd /opt/overemployed",
+    "aws secretsmanager get-secret-value --region eu-north-1 --secret-id overemployed/ec2-env --query SecretString --output text > /tmp/oe-secret.json",
+    "jq -r 'to_entries[] | \"\\(.key)=\\(.value)\"' /tmp/oe-secret.json > .env",
+    "rm -f /tmp/oe-secret.json",
+    "docker compose up -d --build api",
+    "sleep 6",
+    "curl -s -S -o /dev/null -w 'metrics_http=%{http_code}\\n' http://127.0.0.1:4900/api/metrics",
+    "docker compose ps"
+  ]
+}

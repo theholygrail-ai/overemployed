@@ -27,6 +27,15 @@ if (fs.existsSync(path.join(ROOT, 'scripts'))) {
   cpSync(path.join(ROOT, 'scripts'), path.join(BUILD_DIR, 'scripts'));
 }
 
+const extZip = path.join(ROOT, 'extension', 'session-helper.zip');
+if (fs.existsSync(extZip)) {
+  fs.mkdirSync(path.join(BUILD_DIR, 'extension'), { recursive: true });
+  fs.copyFileSync(extZip, path.join(BUILD_DIR, 'extension', 'session-helper.zip'));
+  console.log('--- Copied extension/session-helper.zip (session helper download) ---');
+} else {
+  console.log('--- (optional) Run npm run package:extension to embed extension zip ---');
+}
+
 console.log('--- Creating slim package.json ---');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const slimDeps = { ...pkg.dependencies };
@@ -37,6 +46,7 @@ delete slimDeps['react'];
 delete slimDeps['react-dom'];
 delete slimDeps['react-native-web'];
 delete slimDeps['react-router-dom'];
+delete slimDeps['puppeteer'];
 
 const slimPkg = {
   name: pkg.name,
@@ -88,15 +98,25 @@ for (const pattern of removePatterns) {
 const nmSizeAfter = execSync(`powershell -c "(Get-ChildItem -Recurse '${BUILD_DIR}\\node_modules' | Measure-Object -Sum Length).Sum / 1MB"`, { encoding: 'utf8' }).trim();
 console.log(`node_modules after cleanup: ${parseFloat(nmSizeAfter).toFixed(1)} MB`);
 
-console.log('--- Creating zip ---');
+console.log('--- Creating zip (archiver) ---');
 if (fs.existsSync(ZIP_PATH)) fs.unlinkSync(ZIP_PATH);
-run(`powershell -c "Compress-Archive -Path '${BUILD_DIR}\\*' -DestinationPath '${ZIP_PATH}' -Force"`, { cwd: BUILD_DIR });
+
+const archiver = (await import('archiver')).default;
+await new Promise((resolve, reject) => {
+  const output = fs.createWriteStream(ZIP_PATH);
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  output.on('close', resolve);
+  archive.on('error', reject);
+  archive.pipe(output);
+  archive.directory(BUILD_DIR, false);
+  archive.finalize();
+});
 
 const zipSize = fs.statSync(ZIP_PATH).size / (1024 * 1024);
 console.log(`Zip size: ${zipSize.toFixed(1)} MB`);
 
 if (zipSize > 50) {
-  console.log('Zip > 50MB — uploading to S3 for deployment.');
+  console.log('Zip > 50MB — must upload via S3.');
 } else {
   console.log('Zip <= 50MB — can deploy directly.');
 }

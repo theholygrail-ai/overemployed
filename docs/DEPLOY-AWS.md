@@ -2,6 +2,10 @@
 
 The Express API **cannot** run on Vercel serverless (long jobs, WebSockets, Playwright, cron). Use a small **EC2** instance with **Docker Compose**.
 
+## 0. Automated provisioning (optional)
+
+If you use the AWS CLI from a workstation, see **`scripts/aws-provision/README.md`** for S3 deploy bucket, Secrets Manager `.env`, IAM role, and user-data patterns used for EC2 + Docker.
+
 ## 1. Launch EC2
 
 - **AMI**: Amazon Linux 2023 or Ubuntu 22.04  

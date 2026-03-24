@@ -38,12 +38,20 @@ export async function handler(event) {
   if (action === 'apply') {
     const { applicationId } = payload;
     if (!applicationId) {
+      await setRunState({ running: false });
       return { ok: false, error: 'applicationId is required' };
     }
-    const ApplicatorAgent = (await import('./agents/ApplicatorAgent.js')).default;
-    const applicator = new ApplicatorAgent({ broadcast });
-    const result = await applicator.applyToApplication(applicationId);
-    return { ok: true, result };
+    try {
+      const ApplicatorAgent = (await import('./agents/ApplicatorAgent.js')).default;
+      const applicator = new ApplicatorAgent({ broadcast });
+      const result = await applicator.applyToApplication(applicationId);
+      await setRunState({ running: false });
+      return { ok: true, result };
+    } catch (err) {
+      console.error('[worker-lambda] apply error:', err);
+      await setRunState({ running: false });
+      return { ok: false, error: err.message };
+    }
   }
 
   return { ok: false, error: `Unknown action: ${action}` };

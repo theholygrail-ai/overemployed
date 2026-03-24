@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Session Helper</h1>
+    <p class="hint">Log in on the job site in a normal tab, then click <strong>Sync cookies</strong>.</p>
+
+    <label>API base URL <span class="req">*</span></label>
+    <input type="url" id="apiUrl" placeholder="https://xxx.lambda-url.eu-north-1.on.aws" autocomplete="off" />
+
+    <label>API key <span class="req">*</span> <span class="muted">(same as VITE_API_KEY)</span></label>
+    <input type="password" id="apiKey" placeholder="Bearer secret" autocomplete="off" />
+
+    <button type="button" id="save">Save settings</button>
+
+    <button type="button" id="sync" class="primary">Sync cookies from active tab</button>
+
+    <div id="status" class="status" role="status"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

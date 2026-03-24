@@ -90,7 +90,15 @@ router.get('/api/profile/artifacts', async (req, res, next) => {
 
 router.delete('/api/profile/artifacts/:filename', async (req, res, next) => {
   try {
-    const filePath = path.join(ARTIFACTS_DIR, req.params.filename);
+    const raw = req.params.filename;
+    if (!raw || raw.includes('..') || raw.includes('/') || raw.includes('\\')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+    const base = path.resolve(ARTIFACTS_DIR);
+    const filePath = path.resolve(base, raw);
+    if (!filePath.startsWith(base + path.sep) && filePath !== base) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
     await fs.unlink(filePath);
     res.json({ deleted: true });
   } catch (err) {

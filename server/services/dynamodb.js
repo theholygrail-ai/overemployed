@@ -103,6 +103,27 @@ export async function updateApplicationStatus(applicationId, newStatus) {
   return Attributes;
 }
 
+/**
+ * Set status and attach apply-proof metadata (automation success verification screenshots).
+ * @param {object} applyProof - { capturedAt, shots: [{ label, index }], engine? }
+ */
+export async function updateApplicationStatusWithApplyProof(applicationId, newStatus, applyProof) {
+  const { Attributes } = await docClient.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { applicationId },
+      UpdateExpression: 'SET #s = :status, applyProof = :proof',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: {
+        ':status': newStatus,
+        ':proof': applyProof,
+      },
+      ReturnValues: 'ALL_NEW',
+    })
+  );
+  return Attributes;
+}
+
 export async function deleteApplication(applicationId) {
   await docClient.send(
     new DeleteCommand({ TableName: TABLE_NAME, Key: { applicationId } })

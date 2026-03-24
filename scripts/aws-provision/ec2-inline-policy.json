@@ -1,0 +1,37 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoApplications",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:eu-north-1:974560757141:table/TheHolyGrail-Applications",
+        "arn:aws:dynamodb:eu-north-1:974560757141:table/TheHolyGrail-Applications/index/*"
+      ]
+    },
+    {
+      "Sid": "DeployBundleRead",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::overemployed-code-974560757141",
+        "arn:aws:s3:::overemployed-code-974560757141/*"
+      ]
+    },
+    {
+      "Sid": "AppSecrets",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:eu-north-1:974560757141:secret:overemployed/ec2-env*"
+    }
+  ]
+}

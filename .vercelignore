@@ -1,0 +1,13 @@
+# Keep Vercel CLI uploads small (<100MB limit). Build runs `npm install` + `vite build` on Vercel.
+node_modules
+dist
+.lambda-build
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+data
+lambda-deploy.zip
+lambda-full.zip
+response.json

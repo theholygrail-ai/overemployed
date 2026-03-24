@@ -1,0 +1,11 @@
+{
+  "commands": [
+    "cd /opt/overemployed",
+    "aws s3 cp s3://overemployed-code-974560757141/patches/Dockerfile.nova-act ./Dockerfile.nova-act",
+    "docker compose --profile nova-act build nova-act",
+    "docker compose up -d --build api",
+    "sleep 8",
+    "curl -s -S http://127.0.0.1:4900/api/metrics | head -c 400 || true",
+    "docker compose ps"
+  ]
+}

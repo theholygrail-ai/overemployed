@@ -2,6 +2,12 @@
 #   docker compose up -d --build
 #
 # Mount ./data so memory.json, schedule.json, and uploads survive restarts.
+#
+# Nova Act in Docker (optional): build the sidecar image, mount the Docker socket into api,
+# set NOVA_ACT_USE_DOCKER=true and NOVA_ACT_HOST_DATA_PATH to the *host* absolute path of ./data
+# (same directory as the ./data bind mount below). Example on Linux:
+#   NOVA_ACT_HOST_DATA_PATH=/opt/overemployed/data
+# Then: docker compose build nova-act && docker compose up -d api
 services:
   api:
     build: .
@@ -11,4 +17,15 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      # Allow api container to spawn ephemeral Nova Act runs: docker run --rm -i …
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+
+  # Build only: docker compose build nova-act  (image used by api via docker run)
+  nova-act:
+    build:
+      context: .
+      dockerfile: Dockerfile.nova-act
+    image: overemployed-nova-act:latest
+    profiles:
+      - nova-act

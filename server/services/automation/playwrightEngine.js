@@ -1,7 +1,19 @@
 import { chromium } from 'playwright';
+import { applyCookiesToPlaywrightContext } from '../sessionCookies.js';
+import {
+  verifyLinkedInEasyApplySuccess,
+  verifyGenericApplicationSuccess,
+} from './applyVerification.js';
+import { fillPlaywrightFromKnowledge } from './applicationFormFiller.js';
+import { setCvFilesPlaywright } from './cvUpload.js';
 
-export async function applyWithPlaywright(job, cvPath, profile, artifacts, options = {}) {
-  const { onProgress, onBlocker, liAtCookie } = options;
+export async function applyWithPlaywright(job, cvAssets, profile, artifacts, options = {}) {
+  const { onProgress, onBlocker, liAtCookie, sessionCookies, knowledgePack } = options;
+  const kp = knowledgePack || {
+    tailoredCV: '',
+    roleTitle: job.title || '',
+    company: job.company || '',
+  };
   let browser;
 
   try {
@@ -13,6 +25,11 @@ export async function applyWithPlaywright(job, cvPath, profile, artifacts, optio
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
     });
+
+    if (sessionCookies?.length) {
+      const n = await applyCookiesToPlaywrightContext(context, sessionCookies);
+      onProgress?.(`Loaded ${n} saved session cookie(s)`);
+    }
 
     if (liAtCookie && job.url.includes('linkedin.com')) {
       await context.addCookies([{
@@ -39,10 +56,10 @@ export async function applyWithPlaywright(job, cvPath, profile, artifacts, optio
     onProgress?.(`Detected platform: ${platform}`);
 
     if (platform === 'linkedin') {
-      return await handleLinkedIn(page, profile, cvPath, screenshot, onProgress, onBlocker);
+      return await handleLinkedIn(page, profile, cvAssets, screenshot, onProgress, onBlocker, kp);
     }
 
-    return await handleGenericForm(page, profile, cvPath, screenshot, onProgress, onBlocker);
+    return await handleGenericForm(page, profile, cvAssets, screenshot, onProgress, onBlocker, kp);
   } catch (err) {
     let screenshot = null;
     try {
@@ -106,7 +123,23 @@ async function identifyBlockerReason(page) {
   return 'Login wall detected';
 }
 
-async function handleLinkedIn(page, profile, cvPath, initialScreenshot, onProgress, onBlocker) {
+async function findLinkedInSubmitApplicationButton(page) {
+  let submitBtn = await page.$('button:has-text("Submit application")');
+  if (submitBtn) return submitBtn;
+  const buttons = await page.$$('button');
+  for (const b of buttons) {
+    const text = ((await b.textContent()) || '').trim().toLowerCase();
+    const aria = ((await b.getAttribute('aria-label')) || '').toLowerCase();
+    if (text.includes('submit application') || aria.includes('submit application')) {
+      return b;
+    }
+  }
+  return null;
+}
+
+async function handleLinkedIn(page, profile, cvAssets, initialScreenshot, onProgress, onBlocker, knowledgePack) {
+  const gallery = [{ label: '1. Job page (initial)', buffer: initialScreenshot }];
+
   try {
     const easyApplyBtn = await page.$('button:has-text("Easy Apply")') ||
       await page.$('button[aria-label*="Easy Apply"]');
@@ -134,25 +167,48 @@ async function handleLinkedIn(page, profile, cvPath, initialScreenshot, onProgre
           const shot = await page.screenshot();
           const reason = await identifyBlockerReason(page);
           onBlocker?.(reason, shot, page.url());
-          return { success: false, status: 'blocked', screenshot: shot, blockerReason: reason };
+          return { success: false, status: 'blocked', screenshot: shot, blockerReason: reason, screenshots: gallery };
         }
 
-        await fillProfileFields(page, profile);
+        await fillPlaywrightFromKnowledge(page, knowledgePack, profile, onProgress, {
+          heuristicOnly: step > 0,
+        });
 
+        onProgress?.('Uploading generated CV (PDF/DOCX per field accept)…');
         const fileInputs = await page.$$('input[type="file"]');
         for (const input of fileInputs) {
-          await input.setInputFiles(cvPath).catch(() => {});
+          try {
+            await setCvFilesPlaywright(input, cvAssets, onProgress);
+          } catch { /* try next input */ }
         }
 
         await handleDropdowns(page);
 
-        const submitBtn = await page.$('button:has-text("Submit application")') ||
-          await page.$('button:has-text("Submit")') ||
-          await page.$('button[aria-label*="Submit"]');
+        const submitBtn = await findLinkedInSubmitApplicationButton(page);
 
         if (submitBtn) {
+          gallery.push({
+            label: `2. Form filled (step ${step + 1}, before submit)`,
+            buffer: await page.screenshot(),
+          });
           await submitBtn.click();
-          onProgress?.('Submitted application');
+          onProgress?.('Clicked Submit application — verifying confirmation…');
+
+          const verify = await verifyLinkedInEasyApplySuccess(page);
+          const confirmationShot = await page.screenshot();
+          if (!verify.ok) {
+            gallery.push({ label: '3. After submit (no confirmation detected)', buffer: confirmationShot });
+            return {
+              success: false,
+              status: 'blocked',
+              screenshot: confirmationShot,
+              blockerReason: verify.reason || 'LinkedIn did not show an application-sent confirmation',
+              screenshots: gallery,
+              verified: false,
+            };
+          }
+
+          gallery.push({ label: '3. Confirmation (application sent)', buffer: confirmationShot });
           submitted = true;
           break;
         }
@@ -164,9 +220,13 @@ async function handleLinkedIn(page, profile, cvPath, initialScreenshot, onProgre
           await page.$('button[aria-label*="Review"]');
 
         if (nextBtn) {
+          gallery.push({
+            label: `Step ${step + 1} (after Next/Continue)`,
+            buffer: await page.screenshot(),
+          });
           await nextBtn.click();
           onProgress?.(`Completed step ${step + 1}`);
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(1200);
         } else {
           break;
         }
@@ -178,23 +238,38 @@ async function handleLinkedIn(page, profile, cvPath, initialScreenshot, onProgre
           status: 'blocked',
           screenshot: shot,
           blockerReason: `Stuck at step ${step + 1}: ${stepErr.message}`,
+          screenshots: gallery,
         };
       }
     }
 
     if (submitted) {
-      return { success: true, status: 'applied', screenshot: await page.screenshot() };
+      const finalShot = gallery[gallery.length - 1].buffer;
+      return {
+        success: true,
+        status: 'applied',
+        verified: true,
+        screenshot: finalShot,
+        screenshots: gallery,
+      };
     }
 
     const shot = await page.screenshot();
-    return { success: false, status: 'blocked', screenshot: shot, blockerReason: 'Could not complete all form steps' };
+    gallery.push({ label: 'Last state (could not reach Submit application)', buffer: shot });
+    return {
+      success: false,
+      status: 'blocked',
+      screenshot: shot,
+      blockerReason: 'Could not complete all form steps or find Submit application',
+      screenshots: gallery,
+    };
   } catch (err) {
     const shot = await page.screenshot().catch(() => null);
-    return { success: false, status: 'failed', screenshot: shot, message: err.message };
+    return { success: false, status: 'failed', screenshot: shot, message: err.message, screenshots: gallery };
   }
 }
 
-async function handleGenericForm(page, profile, cvPath, initialScreenshot, onProgress, onBlocker) {
+async function handleGenericForm(page, profile, cvAssets, initialScreenshot, onProgress, onBlocker, knowledgePack) {
   try {
     const formExists = await page.$('form') || await page.$('input[type="text"], input[type="email"]');
     if (!formExists) {
@@ -206,21 +281,16 @@ async function handleGenericForm(page, profile, cvPath, initialScreenshot, onPro
       };
     }
 
-    onProgress?.('Filling generic application form');
+    onProgress?.('Filling generic application form from tailored CV & profile…');
 
-    await fillProfileFields(page, profile);
+    await fillPlaywrightFromKnowledge(page, knowledgePack, profile, onProgress);
 
+    onProgress?.('Uploading generated CV (PDF/DOCX per field accept)…');
     const fileInputs = await page.$$('input[type="file"]');
     for (const input of fileInputs) {
-      await input.setInputFiles(cvPath).catch(() => {});
-    }
-
-    const textareas = await page.$$('textarea');
-    for (const ta of textareas) {
-      const val = await ta.inputValue().catch(() => '');
-      if (!val) {
-        await ta.fill(`I am excited to apply for this position. Please find my resume attached.`).catch(() => {});
-      }
+      try {
+        await setCvFilesPlaywright(input, cvAssets, onProgress);
+      } catch { /* continue */ }
     }
 
     await handleDropdowns(page);
@@ -243,56 +313,42 @@ async function handleGenericForm(page, profile, cvPath, initialScreenshot, onPro
       return { success: false, status: 'blocked', screenshot: shot, blockerReason: 'No submit button found' };
     }
 
+    const filledShot = await page.screenshot();
     await submitBtn.click();
-    onProgress?.('Submitted application');
-    await page.waitForTimeout(2000);
+    onProgress?.('Clicked submit — verifying confirmation…');
+    await page.waitForTimeout(1500);
 
-    return { success: true, status: 'applied', screenshot: await page.screenshot() };
+    const verify = await verifyGenericApplicationSuccess(page);
+    const afterShot = await page.screenshot();
+    if (!verify.ok) {
+      return {
+        success: false,
+        status: 'blocked',
+        screenshot: afterShot,
+        blockerReason: verify.reason || 'No thank-you / confirmation detected after submit',
+        screenshots: [
+          { label: '1. Job page (initial)', buffer: initialScreenshot },
+          { label: '2. Form filled (before submit)', buffer: filledShot },
+          { label: '3. After submit (unverified)', buffer: afterShot },
+        ],
+        verified: false,
+      };
+    }
+
+    return {
+      success: true,
+      status: 'applied',
+      verified: true,
+      screenshot: afterShot,
+      screenshots: [
+        { label: '1. Job page (initial)', buffer: initialScreenshot },
+        { label: '2. Form filled (before submit)', buffer: filledShot },
+        { label: '3. Confirmation / thank you', buffer: afterShot },
+      ],
+    };
   } catch (err) {
     const shot = await page.screenshot().catch(() => null);
     return { success: false, status: 'failed', screenshot: shot, message: err.message };
-  }
-}
-
-async function fillProfileFields(page, profile) {
-  const [firstName, ...lastParts] = profile.name.split(' ');
-  const lastName = lastParts.join(' ');
-
-  const fieldMap = [
-    { patterns: ['first name', 'firstname', 'first_name', 'fname'], value: firstName },
-    { patterns: ['last name', 'lastname', 'last_name', 'lname', 'surname'], value: lastName },
-    { patterns: ['full name', 'name', 'your name'], value: profile.name },
-    { patterns: ['email', 'e-mail'], value: profile.email },
-    { patterns: ['phone', 'telephone', 'mobile', 'cell'], value: profile.phone },
-    { patterns: ['address', 'location', 'city'], value: profile.address || '' },
-    { patterns: ['linkedin', 'linked in'], value: profile.linkedinUrl || '' },
-  ];
-
-  const inputs = await page.$$('input[type="text"], input[type="email"], input[type="tel"], input[type="url"]');
-
-  for (const input of inputs) {
-    const ariaLabel = (await input.getAttribute('aria-label') || '').toLowerCase();
-    const placeholder = (await input.getAttribute('placeholder') || '').toLowerCase();
-    const name = (await input.getAttribute('name') || '').toLowerCase();
-    const id = (await input.getAttribute('id') || '').toLowerCase();
-
-    const label = await input.evaluate(el => {
-      const labelEl = el.closest('label') || (el.id && document.querySelector(`label[for="${el.id}"]`));
-      return labelEl ? labelEl.textContent.toLowerCase().trim() : '';
-    }).catch(() => '');
-
-    const combined = `${ariaLabel} ${placeholder} ${name} ${id} ${label}`;
-
-    for (const field of fieldMap) {
-      if (!field.value) continue;
-      if (field.patterns.some(p => combined.includes(p))) {
-        const current = await input.inputValue().catch(() => '');
-        if (!current) {
-          await input.fill(field.value).catch(() => {});
-        }
-        break;
-      }
-    }
   }
 }
 

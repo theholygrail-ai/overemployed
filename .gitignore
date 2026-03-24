@@ -22,6 +22,7 @@ data/*
 
 # Lambda build artifacts
 .lambda-build/
+deploy.zip
 lambda-deploy.zip
 lambda-full.zip
 response.json

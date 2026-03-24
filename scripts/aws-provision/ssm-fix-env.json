@@ -1,0 +1,12 @@
+{
+  "commands": [
+    "cd /opt/overemployed",
+    "aws secretsmanager get-secret-value --region eu-north-1 --secret-id overemployed/ec2-env --query SecretString --output text > /tmp/oe-secret.json",
+    "jq -r 'to_entries[] | \"\\(.key)=\\(.value)\"' /tmp/oe-secret.json > .env",
+    "rm -f /tmp/oe-secret.json",
+    "docker compose --profile nova-act build nova-act",
+    "docker compose up -d --build api",
+    "docker compose ps",
+    "curl -s -S http://127.0.0.1:4900/api/metrics | head -c 200 || echo curl_failed"
+  ]
+}

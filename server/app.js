@@ -6,7 +6,11 @@ import { createScheduleRoutes } from './routes/schedule.js';
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import hitlRoutes from './routes/hitl.js';
+import sessionCookiesRoutes from './routes/sessionCookies.js';
+import sessionCaptureRoutes from './routes/sessionCapture.js';
+import applyCredentialsRoutes from './routes/applyCredentials.js';
 import errorHandler from './middleware/errorHandler.js';
+import { mutationRateLimitMiddleware } from './middleware/mutationRateLimit.js';
 
 /**
  * @param {{ broadcast: (event: object) => void }} options
@@ -23,6 +27,7 @@ export function createApp({ broadcast }) {
 
   app.use(cors(corsOption));
   app.use(express.json({ limit: '10mb' }));
+  app.use(mutationRateLimitMiddleware());
 
   app.use(createAgentRoutes(broadcast));
   app.use(jobRoutes);
@@ -30,6 +35,9 @@ export function createApp({ broadcast }) {
   app.use(authRoutes);
   app.use(profileRoutes);
   app.use(hitlRoutes);
+  app.use(sessionCookiesRoutes);
+  app.use(sessionCaptureRoutes);
+  app.use(applyCredentialsRoutes);
 
   app.use(errorHandler);
 

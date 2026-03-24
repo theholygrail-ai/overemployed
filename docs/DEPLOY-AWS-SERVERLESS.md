@@ -55,9 +55,13 @@ sam deploy --template-file sam/template.yaml --no-confirm-changeset --capabiliti
 
 ## 3. Outputs
 
-After deploy, note **HttpApiUrl** from CloudFormation outputs. Use it as:
+After deploy, note **HttpApiUrl** from CloudFormation outputs (or, if you use **API Gateway HTTP API** instead of a Lambda Function URL, use the `ApiEndpoint` from `aws apigatewayv2 get-apis`). Use it as:
 
-- `VITE_API_URL` = that URL **without** trailing slash (same value as origin; paths are `/api/...`).
+- `VITE_API_URL` = that URL **without** trailing slash (same value as origin; paths are `/api/...`). Example shape: `https://xxxx.execute-api.eu-north-1.amazonaws.com`.
+
+### Session cookie AI extract (Settings UI)
+
+`POST /api/settings/session-cookies/extract` uses **Groq** (`openai/gpt-oss-120b` by default) with `GROQ_API_KEY` from Lambda env. Override model with env `GROQ_SESSION_EXTRACT_MODEL` if needed.
 - `VITE_WS_URL` — leave unset or set `VITE_DISABLE_WS=true` on Vercel (WebSockets are not exposed on Lambda Function URL; the UI falls back to polling).
 
 ## 4. Vercel

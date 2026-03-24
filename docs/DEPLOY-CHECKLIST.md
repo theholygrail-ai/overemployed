@@ -37,6 +37,28 @@ More options: [DEPLOY-GITHUB.md](./DEPLOY-GITHUB.md).
 
 ---
 
+## Production environment matrix (operator reference)
+
+Use this when wiring **Vercel (frontend)** + **AWS API (Lambda Zip or EC2)** + **data**.
+
+| Variable | Where | Purpose |
+|----------|--------|---------|
+| `VITE_API_URL` | Vercel build | HTTPS origin of the API, **no trailing slash** (e.g. Lambda Function URL). |
+| `VITE_API_KEY` | Vercel build | `Authorization: Bearer …` for `POST /api/agents/run` and `POST /api/jobs/:id/apply` when server `API_KEY` is set. |
+| `VITE_WS_URL` | Vercel build | Optional `wss://…` if you expose WebSocket; otherwise omit — UI uses **Live (API)** + polling. |
+| `VITE_DISABLE_WS` | Vercel build | Optional `true` to force no WebSocket client. |
+| `API_KEY` | Lambda / EC2 | Shared secret; must match `VITE_API_KEY` when enabled. |
+| `FRONTEND_URL` / `FRONTEND_URLS` | Lambda / EC2 | CORS allowlist; comma-separated Vercel URLs. |
+| `DYNAMODB_TABLE_NAME` | Lambda / EC2 | Applications table. |
+| `DATA_S3_BUCKET` | Lambda / EC2 | Shared JSON state (`run-state`, memory, HITL, etc.). |
+| `GROQ_API_KEY` | Lambda / EC2 | LLM for agents. |
+| `ORCHESTRATOR_FUNCTION_NAME` / worker | HTTP Lambda env | Name of worker Lambda for async invoke (if using worker pattern). |
+| `LINKEDIN_*` | Lambda / EC2 | OAuth + scrape configuration. |
+
+Zip Lambda deploy: `npm run deploy:lambda` (see [README](../README.md)). SAM/container stack: separate outputs (`HttpApiUrl`, etc.).
+
+---
+
 ## 2. Vercel: import project and deploy
 
 ### Dashboard (recommended)

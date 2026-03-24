@@ -3,11 +3,8 @@ import OrchestratorAgent from '../agents/OrchestratorAgent.js';
 import { setBroadcast } from '../services/hitl.js';
 import { requireApiKey } from '../middleware/apiKey.js';
 import { getRunState, setRunState } from '../services/runState.js';
-import {
-  shouldUseWorkerLambda,
-  invokeOrchestratorAsync,
-  invokeWorkerSync,
-} from '../services/workerInvoke.js';
+import { updateApplicationStatus } from '../services/dynamodb.js';
+import { shouldUseWorkerLambda, invokeOrchestratorAsync } from '../services/workerInvoke.js';
 
 export function createAgentRoutes(broadcast) {
   const router = Router();
@@ -29,11 +26,11 @@ export function createAgentRoutes(broadcast) {
           status: 'running',
           message: 'Pipeline started — searching for jobs',
         });
-        res.json({
+        await invokeOrchestratorAsync({ action: 'run', criteria: req.body?.criteria });
+        return res.json({
           status: 'started',
           message: 'Pipeline started on worker Lambda. Poll GET /api/agents/status.',
         });
-        await invokeOrchestratorAsync({ action: 'run', criteria: req.body?.criteria });
       } catch (err) {
         console.error('[agents/run] Invoke error:', err.message);
         await setRunState({ running: false, lastRunResult: { error: err.message } });
@@ -42,8 +39,8 @@ export function createAgentRoutes(broadcast) {
           error: err.message,
           message: `Run failed: ${err.message}`,
         });
+        return res.status(500).json({ error: err.message || 'Failed to start pipeline on worker' });
       }
-      return;
     }
 
     await setRunState({ running: true, lastRunResult: null });
@@ -110,27 +107,28 @@ export function createAgentRoutes(broadcast) {
     try { res.setTimeout(600_000); } catch {}
 
     if (shouldUseWorkerLambda()) {
-      await setRunState({ running: true });
-      broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
+      const { id } = req.params;
       try {
-        const { id } = req.params;
-        const data = await invokeWorkerSync({ action: 'apply', applicationId: id });
-        const result = data?.result ?? data;
-        broadcast({ type: 'agent:status', status: 'idle', message: 'Pipeline idle' });
-        broadcast({
-          type: 'agent:apply_complete',
+        await updateApplicationStatus(id, 'applying');
+        await setRunState({ running: true });
+        broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
+        await invokeOrchestratorAsync({ action: 'apply', applicationId: id });
+        return res.json({
+          status: 'started',
           applicationId: id,
-          result,
-          message: result?.success ? 'Application submitted' : 'Apply finished',
+          message: 'Apply started on worker Lambda. Poll GET /api/agents/status or check job status.',
         });
-        res.json(result);
       } catch (err) {
-        broadcast({ type: 'agent:status', status: 'idle', message: 'Apply error' });
-        next(err);
-      } finally {
+        console.error('[agents/apply] Invoke error:', err.message);
         await setRunState({ running: false });
+        try {
+          await updateApplicationStatus(id, 'ready');
+        } catch (e) {
+          console.error('[agents/apply] Could not revert status to ready:', e.message);
+        }
+        broadcast({ type: 'agent:status', status: 'idle', message: 'Apply error' });
+        return res.status(500).json({ error: err.message || 'Failed to start apply on worker' });
       }
-      return;
     }
 
     await setRunState({ running: true });

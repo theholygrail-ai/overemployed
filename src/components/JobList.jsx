@@ -126,6 +126,14 @@ export default function JobList() {
       clearTimeout(fetchDebounceRef.current);
       fetchDebounceRef.current = setTimeout(() => fetchJobs(), 500);
     }
+    if (
+      last.type === 'blocker:resolved' ||
+      last.type === 'blocker:created' ||
+      last.type === 'blocker:skipped'
+    ) {
+      clearTimeout(fetchDebounceRef.current);
+      fetchDebounceRef.current = setTimeout(() => fetchJobs(), 300);
+    }
   }, [messages, fetchJobs]);
 
   /** Without WebSocket, still show "pipeline running" via REST (Lambda / remote API). */
