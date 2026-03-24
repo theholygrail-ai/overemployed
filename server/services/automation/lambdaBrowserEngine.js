@@ -1,6 +1,6 @@
 /**
  * Lambda-compatible browser engine using puppeteer-core + @sparticuz/chromium.
- * Drop-in replacement for playwrightEngine when Playwright binary is unavailable.
+ * Lambda-only browser automation (Puppeteer + Chromium). EC2 apply uses Nova Act instead.
  * Includes HITL interaction loop for remote browser control during blockers.
  */
 
@@ -17,25 +17,19 @@ const HITL_POLL_MS = 2_000;
 const HITL_MAX_MS = 10 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 800 };
 
-let chromiumMod;
+let chromiumSingleton;
 
-async function getChromiumPath() {
-  if (!chromiumMod) {
-    chromiumMod = (await import('@sparticuz/chromium')).default;
+/**
+ * @returns {Promise<import('@sparticuz/chromium').default>}
+ */
+async function getChromium() {
+  if (!chromiumSingleton) {
+    chromiumSingleton = (await import('@sparticuz/chromium')).default;
   }
-  chromiumMod.setHeadlessMode = 'shell';
-  chromiumMod.setGraphicsMode = false;
-  return chromiumMod.executablePath();
-}
-
-function getLaunchArgs() {
-  return chromiumMod?.args ?? [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-gpu',
-    '--disable-dev-shm-usage',
-    '--single-process',
-  ];
+  // Do NOT use headless "shell" mode here: Puppeteer 24+ maps it to Playwright's
+  // chrome-headless-shell under ~/.cache/ms-playwright, which is not bundled in
+  // the Lambda image. Use @sparticuz/chromium's own headless + args only.
+  return chromiumSingleton;
 }
 
 export async function applyWithPuppeteer(job, cvAssets, profile, artifacts, options = {}) {
@@ -49,16 +43,17 @@ export async function applyWithPuppeteer(job, cvAssets, profile, artifacts, opti
 
   try {
     const puppeteer = (await import('puppeteer-core')).default;
+    const chromium = await getChromium();
     console.log('[lambdaBrowserEngine] Resolving Chromium executable path…');
-    const execPath = await getChromiumPath();
+    const execPath = await chromium.executablePath();
     console.log('[lambdaBrowserEngine] Chromium path:', execPath);
 
     console.log('[lambdaBrowserEngine] Launching browser…');
     browser = await puppeteer.launch({
       executablePath: execPath,
-      headless: 'shell',
-      args: getLaunchArgs(),
-      defaultViewport: VIEWPORT,
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport ?? VIEWPORT,
+      headless: chromium.headless,
     });
     console.log('[lambdaBrowserEngine] Browser launched successfully');
 

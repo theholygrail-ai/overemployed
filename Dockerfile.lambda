@@ -10,8 +10,8 @@ COPY server ./server
 COPY context ./context
 COPY scripts ./scripts
 
-# Browser automation (Playwright + Puppeteer-based scrapers)
-RUN npx playwright install chromium --with-deps || true
+# Apply automation uses puppeteer-core + @sparticuz/chromium only (no Playwright browsers).
+# Do not use Puppeteer headless "shell" mode — it expects Playwright's chrome-headless-shell cache.
 
 ENV NODE_ENV=production
 

@@ -6,6 +6,8 @@ import { useApi } from '../hooks/useApi';
 import theme from '../theme';
 
 const SCREENSHOT_POLL_MS = 2000;
+/** Poll in-memory live viewport (Nova Act / Lambda) — same endpoint as Jobs table preview */
+const LIVE_FRAME_POLL_MS = 800;
 const VIEWPORT_W = 1280;
 const VIEWPORT_H = 800;
 
@@ -32,7 +34,10 @@ export default function HITLDetail() {
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [screenshotBroken, setScreenshotBroken] = useState(false);
+  /** Object URL from GET /jobs/:id/live-frame — live Playwright viewport (~1fps during HITL) */
+  const [liveViewportUrl, setLiveViewportUrl] = useState(null);
   const imgRef = useRef(null);
+  const viewportRef = useRef(null);
 
   useEffect(() => {
     setScreenshotBroken(false);
@@ -88,6 +93,49 @@ export default function HITLDetail() {
     return () => clearInterval(interval);
   }, [blocker]);
 
+  useEffect(() => {
+    const pending = blocker?.status === 'pending';
+    const appId = blocker?.applicationId;
+    if (!pending || !appId) {
+      setLiveViewportUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function pollLiveFrame() {
+      try {
+        const res = await apiFetch(`/jobs/${appId}/live-frame?t=${Date.now()}`);
+        if (cancelled) return;
+        if (res.status === 200) {
+          const blob = await res.blob();
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          setLiveViewportUrl(prev => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        }
+      } catch {
+        /* offline or API unreachable */
+      }
+    }
+
+    pollLiveFrame();
+    const interval = setInterval(pollLiveFrame, LIVE_FRAME_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      setLiveViewportUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, [blocker?.applicationId, blocker?.status]);
+
   function addLog(msg) {
     setActionLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 50));
   }
@@ -114,8 +162,11 @@ export default function HITLDetail() {
   }
 
   function handleImageClick(e) {
-    if (!imgRef.current || blocker?.status !== 'pending') return;
-    const rect = imgRef.current.getBoundingClientRect();
+    if (!viewportRef.current || blocker?.status !== 'pending') return;
+    // Map clicks to the automation viewport (1280×800). Use the viewport wrapper, not the <img>,
+    // so coordinates stay valid when the screenshot 404s and the image has no height.
+    const rect = viewportRef.current.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
     const scaleX = VIEWPORT_W / rect.width;
     const scaleY = VIEWPORT_H / rect.height;
     const x = Math.round((e.clientX - rect.left) * scaleX);
@@ -137,7 +188,12 @@ export default function HITLDetail() {
 
   async function handleProceed() {
     try {
-      await apiFetch(`/hitl/${id}/resume`, { method: 'POST' });
+      const res = await apiFetch(`/hitl/${id}/resume`, { method: 'POST' });
+      if (!res.ok) {
+        const t = await res.text();
+        addLog(`Proceed error ${res.status}: ${t || res.statusText}`);
+        return;
+      }
       addLog('Proceed — automation resuming');
       fetchBlocker();
     } catch (err) {
@@ -147,7 +203,12 @@ export default function HITLDetail() {
 
   async function handleSkip() {
     try {
-      await apiFetch(`/hitl/${id}/skip`, { method: 'POST' });
+      const res = await apiFetch(`/hitl/${id}/skip`, { method: 'POST' });
+      if (!res.ok) {
+        const t = await res.text();
+        addLog(`Skip error ${res.status}: ${t || res.statusText}`);
+        return;
+      }
       addLog('Skipped');
       fetchBlocker();
     } catch (err) {
@@ -179,6 +240,10 @@ export default function HITLDetail() {
 
   const isPending = blocker.status === 'pending';
   const screenshotUrl = `${buildApiPath(`/hitl/${id}/screenshot`)}?t=${screenshotTs}`;
+  const displaySrc = liveViewportUrl || screenshotUrl;
+  const hasLiveViewport = Boolean(liveViewportUrl);
+  const showViewportPlaceholder =
+    !hasLiveViewport && (!blocker.hasScreenshot || screenshotBroken);
   const sessionSiteUrl = blocker.liveUrl || job?.jobLink || '';
   const siteHost = sessionHostname(sessionSiteUrl);
   const handleDownloadExtension = async () => {
@@ -223,18 +288,35 @@ export default function HITLDetail() {
       <View style={styles.body}>
         <View style={styles.browserPane}>
           <View style={styles.browserChrome}>
-            <View style={styles.urlBar}>
-              <Text style={styles.urlText} numberOfLines={1}>{blocker.liveUrl || '—'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={[styles.urlBar, { flex: 1 }]}>
+                <Text style={styles.urlText} numberOfLines={1}>{blocker.liveUrl || '—'}</Text>
+              </View>
+              {hasLiveViewport && isPending && (
+                <View style={styles.liveBadge}>
+                  <Text style={styles.liveBadgeText}>● Live</Text>
+                </View>
+              )}
             </View>
             {sending && <View style={styles.loadingBar} />}
           </View>
 
           <div
-            style={{ position: 'relative', width: '100%', cursor: isPending ? 'crosshair' : 'default', overflow: 'hidden', borderRadius: '0 0 10px 10px', background: '#111', minHeight: 120 }}
+            ref={viewportRef}
+            style={{
+              position: 'relative',
+              width: '100%',
+              aspectRatio: `${VIEWPORT_W} / ${VIEWPORT_H}`,
+              cursor: isPending ? 'crosshair' : 'default',
+              overflow: 'hidden',
+              borderRadius: '0 0 10px 10px',
+              background: '#111',
+              minHeight: 120,
+            }}
             onClick={handleImageClick}
             onWheel={handleImageScroll}
           >
-            {(!blocker.hasScreenshot || screenshotBroken) && (
+            {showViewportPlaceholder && (
               <div
                 style={{
                   position: 'absolute',
@@ -251,19 +333,29 @@ export default function HITLDetail() {
                   textAlign: 'center',
                 }}
               >
-                {screenshotBroken
-                  ? 'Could not load screenshot from API (404 or network). Check Vercel BACKEND_URL proxy and API logs.'
-                  : 'No screenshot was captured for this blocker (engine may have failed before a browser snapshot). The message above still explains what went wrong.'}
+                {screenshotBroken && !hasLiveViewport
+                  ? 'Could not load static screenshot from API. Live viewport appears while the apply worker is running (same API as Jobs). Check BACKEND_URL / VITE_API_URL.'
+                  : 'Waiting for live viewport from the apply worker (AWS Lambda browser or Nova Act on EC2). If this persists, the worker may have exited — open Jobs to confirm status.'}
               </div>
             )}
             <img
               ref={imgRef}
-              src={screenshotUrl}
+              src={displaySrc}
               alt="Browser view"
-              style={{ width: '100%', display: 'block', userSelect: 'none', pointerEvents: 'none', opacity: !blocker.hasScreenshot || screenshotBroken ? 0 : 1 }}
+              style={{
+                width: '100%',
+                display: 'block',
+                userSelect: 'none',
+                pointerEvents: 'none',
+                opacity: showViewportPlaceholder ? 0 : 1,
+              }}
               draggable={false}
-              onLoad={() => setScreenshotBroken(false)}
-              onError={() => setScreenshotBroken(true)}
+              onLoad={() => {
+                if (!hasLiveViewport) setScreenshotBroken(false);
+              }}
+              onError={() => {
+                if (!hasLiveViewport) setScreenshotBroken(true);
+              }}
             />
             {!isPending && (
               <div style={{
@@ -443,6 +535,13 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   urlText: { color: theme.colors.textMuted, fontSize: theme.fonts.xs, fontFamily: 'monospace' },
+  liveBadge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  liveBadgeText: { color: '#4ade80', fontSize: theme.fonts.xs, fontWeight: '700' },
   loadingBar: {
     height: 2,
     backgroundColor: theme.colors.primary,
