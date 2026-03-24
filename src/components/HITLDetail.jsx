@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, ScrollView } from 'react-native';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch, buildApiPath, downloadSessionExtensionZip } from '../config.js';
 import { useApi } from '../hooks/useApi';
@@ -31,7 +31,12 @@ export default function HITLDetail() {
   const [sending, setSending] = useState(false);
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [screenshotBroken, setScreenshotBroken] = useState(false);
   const imgRef = useRef(null);
+
+  useEffect(() => {
+    setScreenshotBroken(false);
+  }, [id]);
 
   const fetchBlocker = useCallback(async () => {
     try {
@@ -201,7 +206,12 @@ export default function HITLDetail() {
         </TouchableOpacity>
         <View style={styles.headerInfo}>
           <Text style={styles.heading}>Browser Intervention</Text>
-          <Text style={styles.subheading}>{blocker.reason}</Text>
+          <Text style={styles.reasonPreview} numberOfLines={2}>
+            {blocker.reason || '—'}
+          </Text>
+          <ScrollView style={styles.reasonScroll} nestedScrollEnabled>
+            <Text style={styles.reasonFull}>{blocker.reason}</Text>
+          </ScrollView>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: isPending ? theme.colors.warning + '22' : theme.colors.success + '22' }]}>
           <Text style={[styles.statusText, { color: isPending ? theme.colors.warning : theme.colors.success }]}>
@@ -220,16 +230,40 @@ export default function HITLDetail() {
           </View>
 
           <div
-            style={{ position: 'relative', width: '100%', cursor: isPending ? 'crosshair' : 'default', overflow: 'hidden', borderRadius: '0 0 10px 10px', background: '#111' }}
+            style={{ position: 'relative', width: '100%', cursor: isPending ? 'crosshair' : 'default', overflow: 'hidden', borderRadius: '0 0 10px 10px', background: '#111', minHeight: 120 }}
             onClick={handleImageClick}
             onWheel={handleImageScroll}
           >
+            {(!blocker.hasScreenshot || screenshotBroken) && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 16,
+                  background: 'rgba(0,0,0,0.75)',
+                  color: '#ccc',
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  textAlign: 'center',
+                }}
+              >
+                {screenshotBroken
+                  ? 'Could not load screenshot from API (404 or network). Check Vercel BACKEND_URL proxy and API logs.'
+                  : 'No screenshot was captured for this blocker (engine may have failed before a browser snapshot). The message above still explains what went wrong.'}
+              </div>
+            )}
             <img
               ref={imgRef}
               src={screenshotUrl}
               alt="Browser view"
-              style={{ width: '100%', display: 'block', userSelect: 'none', pointerEvents: 'none' }}
+              style={{ width: '100%', display: 'block', userSelect: 'none', pointerEvents: 'none', opacity: !blocker.hasScreenshot || screenshotBroken ? 0 : 1 }}
               draggable={false}
+              onLoad={() => setScreenshotBroken(false)}
+              onError={() => setScreenshotBroken(true)}
             />
             {!isPending && (
               <div style={{
@@ -381,9 +415,11 @@ const styles = StyleSheet.create({
   },
   backLink: { padding: theme.spacing.xs },
   backLinkText: { color: theme.colors.primary, fontSize: theme.fonts.sm },
-  headerInfo: { flex: 1 },
+  headerInfo: { flex: 1, minWidth: 0 },
   heading: { fontSize: theme.fonts.xl, fontWeight: '700', color: theme.colors.text },
-  subheading: { fontSize: theme.fonts.sm, color: theme.colors.textMuted, marginTop: 2 },
+  reasonPreview: { fontSize: theme.fonts.sm, color: theme.colors.textSecondary, marginTop: 4, fontWeight: '600' },
+  reasonScroll: { maxHeight: 100, marginTop: 6 },
+  reasonFull: { fontSize: theme.fonts.xs, color: theme.colors.textMuted, lineHeight: 18 },
   statusBadge: { borderRadius: theme.borderRadius.sm, paddingHorizontal: 12, paddingVertical: 4 },
   statusText: { fontSize: theme.fonts.sm, fontWeight: '600' },
   body: { flexDirection: 'row', flex: 1, gap: theme.spacing.md },

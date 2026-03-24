@@ -1,5 +1,24 @@
 const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
 
+/**
+ * Node.js `playwright` package needs `npx playwright install chromium` on the API host.
+ * EC2/Docker setups run Nova Act inside the `Dockerfile.nova-act` image (official `nova-act` SDK + bundled Chromium).
+ * Falling back to Node Playwright there fails with "Executable doesn't exist at .../.cache/ms-playwright/...".
+ *
+ * @see https://nova.amazon.com/dev/documentation — Nova Act product docs
+ */
+function shouldUseNodePlaywrightFallback() {
+  if (process.env.PLAYWRIGHT_FALLBACK === 'true') return true;
+  if (process.env.PLAYWRIGHT_FALLBACK === 'false') return false;
+  if (process.env.NOVA_ACT_USE_DOCKER === 'true') return false;
+  return true;
+}
+
+function novaFailureMessage(result, err) {
+  if (err?.message) return err.message;
+  return result?.message || 'Nova Act did not complete successfully';
+}
+
 /** @param {{ docxPath: string, pdfPath: string }} cvAssets */
 export async function applyToJob(job, cvAssets, profile, artifacts, options = {}) {
   // On Lambda: use puppeteer-core + @sparticuz/chromium (always available in zip)
@@ -19,8 +38,10 @@ export async function applyToJob(job, cvAssets, profile, artifacts, options = {}
     }
   }
 
-  // Local: try Nova Act first, then Playwright
+  const fallbackPlaywright = shouldUseNodePlaywrightFallback();
   let novaAvailable = false;
+  let lastNovaResult = null;
+  let lastNovaErr = null;
 
   try {
     const { isNovaActAvailable, applyWithNovaAct } = await import('./novaActBridge.js');
@@ -30,19 +51,54 @@ export async function applyToJob(job, cvAssets, profile, artifacts, options = {}
       try {
         console.log(`[automationRouter] Using Nova Act for ${job.company} — ${job.title}`);
         options.onProgress?.('Using Nova Act automation engine (Groq planner + session cookies)');
-        const result = await applyWithNovaAct(job, cvAssets, profile, artifacts, options);
-        if (result.success || result.status === 'blocked') {
-          return { engine: 'nova-act', ...result };
+        lastNovaResult = await applyWithNovaAct(job, cvAssets, profile, artifacts, options);
+        if (lastNovaResult.success || lastNovaResult.status === 'blocked') {
+          return { engine: 'nova-act', ...lastNovaResult };
         }
-        console.warn(`[automationRouter] Nova Act finished without success (${result.message || 'unknown'}), falling back to Playwright`);
-        options.onProgress?.(`Nova Act: ${result.message || 'failed'}. Falling back to Playwright.`);
+        console.warn(
+          `[automationRouter] Nova Act finished without success (${lastNovaResult.message || 'unknown'})`
+        );
+        options.onProgress?.(`Nova Act: ${lastNovaResult.message || 'failed'}.`);
+        if (!fallbackPlaywright) {
+          return {
+            engine: 'nova-act',
+            success: false,
+            status: lastNovaResult.status === 'blocked' ? 'blocked' : 'failed',
+            message: novaFailureMessage(lastNovaResult, null),
+            blockerReason: lastNovaResult.blockerReason,
+          };
+        }
+        options.onProgress?.('Falling back to Playwright.');
       } catch (err) {
-        console.warn(`[automationRouter] Nova Act failed, falling back to Playwright: ${err.message}`);
-        options.onProgress?.(`Nova Act failed: ${err.message}. Falling back to Playwright.`);
+        lastNovaErr = err;
+        console.warn(`[automationRouter] Nova Act failed: ${err.message}`);
+        options.onProgress?.(`Nova Act failed: ${err.message}.`);
+        if (!fallbackPlaywright) {
+          return {
+            engine: 'nova-act',
+            success: false,
+            status: 'failed',
+            message: err.message,
+          };
+        }
+        options.onProgress?.('Falling back to Playwright.');
       }
     }
   } catch {
     novaAvailable = false;
+  }
+
+  if (!fallbackPlaywright) {
+    const msg = !novaAvailable
+      ? 'Nova Act is not available (probe failed). Check Docker image, NOVA_ACT_USE_DOCKER, NOVA_ACT_HOST_DATA_PATH, and that the nova-act image runs. Node Playwright fallback is disabled (NOVA_ACT_USE_DOCKER or PLAYWRIGHT_FALLBACK=false).'
+      : novaFailureMessage(lastNovaResult, lastNovaErr);
+    console.error(`[automationRouter] ${msg}`);
+    return {
+      engine: 'nova-act',
+      success: false,
+      status: 'failed',
+      message: msg,
+    };
   }
 
   if (!novaAvailable) {

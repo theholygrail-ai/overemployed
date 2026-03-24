@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
 Nova Act + Groq planner loop for job applications.
+
+Uses the official Amazon **Nova Act** Python SDK (`pip install nova-act`) — browser automation
+API documented at https://nova.amazon.com/dev/documentation (product: Nova Act).
+
+This script is the stdin/stdout worker spawned by server/services/automation/novaActBridge.js
+(Docker or WSL). It is not a replacement for Nova Act; it orchestrates Groq planning + Nova Act
+`act` / `act_get` calls and HITL blocker events.
+
 Protocol: first stdin line = JSON command; stdout = NDJSON events.
 After a blocker event, read one stdin line: {"cmd":"resume"} or {"cmd":"skip"}.
 """
