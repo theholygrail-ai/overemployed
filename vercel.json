@@ -5,6 +5,9 @@
   "functions": {
     "api/[...path].mjs": {
       "maxDuration": 300
+    },
+    "api/jobs/[id]/apply.mjs": {
+      "maxDuration": 300
     }
   },
   "rewrites": [

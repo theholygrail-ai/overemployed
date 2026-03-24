@@ -43,3 +43,5 @@ Link the project to your Vercel account when prompted. Set env vars in the dashb
 ## SPA routing
 
 [`vercel.json`](../vercel.json) rewrites paths to `index.html` for React Router, but **must not** match `/api/*` (otherwise `/api/jobs` returns the SPA HTML). The pattern excludes `api/`, `assets/`, and `extension/`.
+
+If **Apply** returns Vercel `NOT_FOUND`, the project also defines an explicit serverless route `api/jobs/[id]/apply.mjs` so `POST /api/jobs/:id/apply` hits the proxy (some root catch-all routes miss deep paths).
