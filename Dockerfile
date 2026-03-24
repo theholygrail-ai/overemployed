@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
+    python3 \
+    python3-pip \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
@@ -28,8 +30,10 @@ COPY package.json package-lock.json ./
 
 RUN npm ci --omit=dev
 
-# Browser automation (Playwright + Puppeteer-based scrapers)
-RUN npx playwright install chromium --with-deps || true
+# Nova Act runtime for apply (Python SDK + browser install per official docs)
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
+  && python3 -m pip install --no-cache-dir "nova-act>=3.0" \
+  && python3 -m playwright install chromium --with-deps || python3 -m playwright install chromium || true
 
 COPY server ./server
 COPY context ./context

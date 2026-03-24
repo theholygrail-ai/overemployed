@@ -35,7 +35,7 @@ export async function isNovaActAvailable() {
     { docxPath: path.join(process.cwd(), 'data', '.probe'), pdfPath: path.join(process.cwd(), 'data', '.probe') },
     [],
   );
-  const mode = paths.useDocker ? 'docker' : isLambda ? 'lambda' : 'wsl';
+  const mode = paths.useDocker ? 'docker' : isLambda ? 'lambda' : process.platform === 'win32' ? 'wsl' : 'python';
 
   if (
     cachedAvailability !== null &&
@@ -72,9 +72,17 @@ export async function isNovaActAvailable() {
       proc.stdout.on('data', chunk => { stdout += chunk; });
       proc.on('close', code => resolve(code === 0 && stdout.trim() === 'ok'));
       proc.on('error', () => resolve(false));
-    } else {
+    } else if (process.platform === 'win32') {
       const proc = spawn('wsl', ['python3', '-c', 'import nova_act; print("ok")'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', chunk => { stdout += chunk; });
+      proc.on('close', code => resolve(code === 0 && stdout.trim() === 'ok'));
+      proc.on('error', () => resolve(false));
+    } else {
+      const proc = spawn(pythonBin(), ['-c', 'import nova_act; print("ok")'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';
       proc.stdout.on('data', chunk => { stdout += chunk; });
@@ -178,9 +186,12 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
   } else if (isLambda) {
     spawnCmd = pythonBin();
     spawnArgs = ['-u', runner.scriptPath];
-  } else {
+  } else if (process.platform === 'win32') {
     spawnCmd = 'wsl';
     spawnArgs = ['python3', '-u', runner.scriptPath];
+  } else {
+    spawnCmd = pythonBin();
+    spawnArgs = ['-u', path.join(process.cwd(), 'scripts', 'nova_act_agent.py')];
   }
 
   const childEnv = { ...process.env };
