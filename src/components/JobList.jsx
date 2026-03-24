@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApi, apiGet } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { formatDate, truncate, statusColor, sourceIcon, formatDateTime } from '../utils/formatters';
-import { apiFetch, getWsUrl } from '../config.js';
+import { apiFetch, buildApiPath, getWsUrl } from '../config.js';
 import CVViewer from './CVViewer';
 import ApplicationProofModal from './ApplicationProofModal';
 import theme from '../theme';
@@ -33,6 +33,9 @@ export default function JobList() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [runInProgress, setRunInProgress] = useState(false);
   const [applyError, setApplyError] = useState(null);
+  const [hitlNavError, setHitlNavError] = useState(null);
+  /** Bump so applying rows refetch live-frame PNG from API */
+  const [liveFrameTick, setLiveFrameTick] = useState(0);
   const fetchDebounceRef = useRef(null);
   const pollRef = useRef(null);
   const runBusyRef = useRef(false);
@@ -110,6 +113,13 @@ export default function JobList() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  useEffect(() => {
+    const anyApplying = jobs.some((j) => j.status === 'applying');
+    if (!anyApplying) return undefined;
+    const id = setInterval(() => setLiveFrameTick((t) => t + 1), 2800);
+    return () => clearInterval(id);
+  }, [jobs]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -230,6 +240,15 @@ export default function JobList() {
         </View>
       )}
 
+      {hitlNavError && (
+        <View style={[styles.banner, { borderColor: theme.colors.warning + '88', backgroundColor: theme.colors.warning + '18' }]}>
+          <Text style={styles.bannerText}>{hitlNavError}</Text>
+          <TouchableOpacity style={styles.bannerBtn} onPress={() => setHitlNavError(null)}>
+            <Text style={styles.bannerBtnText}>Dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {runInProgress && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>Pipeline running — new jobs will appear when scraping completes.</Text>
@@ -292,6 +311,7 @@ export default function JobList() {
                 { key: 'source', label: 'Source', width: 100 },
                 { key: 'matchScore', label: 'Match', width: 80 },
                 { key: 'dateFound', label: 'Date Found', width: 120 },
+                { key: null, label: 'Live', width: 96 },
                 { key: null, label: 'Actions', width: 400 },
               ].map((col) => (
                 <TouchableOpacity
@@ -335,6 +355,30 @@ export default function JobList() {
                   <View style={[styles.td, { width: 120 }]}>
                     <Text style={styles.tdTextMuted}>{formatDate(job.dateFound)}</Text>
                   </View>
+                  <View style={[styles.td, { width: 96, justifyContent: 'center' }]}>
+                    {job.status === 'applying' ? (
+                      <div
+                        style={{
+                          width: 88,
+                          height: 50,
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                          background: '#111',
+                        }}
+                      >
+                        <img
+                          alt=""
+                          src={`${buildApiPath(`/jobs/${job.applicationId}/live-frame`)}?t=${liveFrameTick}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                          onError={(e) => {
+                            e.target.style.opacity = '0.12';
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <Text style={styles.tdTextMuted}>—</Text>
+                    )}
+                  </View>
                   <View style={[styles.td, styles.actionsCell, { width: 400 }]}>
                     {['ready', 'reviewed', 'cv_generated'].includes(job.status) && (
                       <TouchableOpacity
@@ -356,17 +400,24 @@ export default function JobList() {
                       <TouchableOpacity
                         style={[styles.actionBtn, { backgroundColor: theme.colors.error + '22', borderColor: theme.colors.error, borderWidth: 1 }]}
                         onPress={async () => {
+                          setHitlNavError(null);
                           try {
                             const res = await apiFetch('/hitl/all');
                             if (res.ok) {
                               const blockers = await res.json();
-                              const match = blockers.find(b => b.applicationId === job.applicationId);
-                              if (match) {
-                                navigate(`/interventions/${match.id}`);
+                              const match = blockers.find((b) => b.applicationId === job.applicationId);
+                              if (match?.id) {
+                                navigate(`/interventions/${encodeURIComponent(match.id)}`);
                                 return;
                               }
+                              setHitlNavError('No blocker record for this job yet — open Interventions.');
+                            } else {
+                              const t = await res.text();
+                              setHitlNavError(t || `HTTP ${res.status}`);
                             }
-                          } catch { /* fall through */ }
+                          } catch (e) {
+                            setHitlNavError(e?.message || 'Request failed');
+                          }
                           navigate('/interventions');
                         }}
                       >

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -25,8 +26,28 @@ def send_event(event_type: str, **kwargs) -> None:
     print(json.dumps(msg), flush=True)
 
 
-def send_progress(message: str) -> None:
-    send_event("progress", message=message)
+_last_prog_frame_ts: float = 0.0
+PROG_FRAME_MIN_INTERVAL_S = 6.0
+
+
+def send_progress(message: str, page=None) -> None:
+    """Emit progress; optionally attach a throttled viewport PNG for live UI in the app."""
+    global _last_prog_frame_ts
+    shot_b64 = None
+    if page is not None:
+        now = time.time()
+        if now - _last_prog_frame_ts >= PROG_FRAME_MIN_INTERVAL_S:
+            try:
+                raw = page.screenshot()
+                if raw:
+                    shot_b64 = base64.b64encode(raw).decode()
+                    _last_prog_frame_ts = now
+            except Exception:
+                pass
+    if shot_b64:
+        send_event("progress", message=message, screenshot=shot_b64)
+    else:
+        send_event("progress", message=message)
 
 
 def send_blocker(reason: str, screenshot_b64: str | None, url: str | None) -> None:
@@ -240,7 +261,7 @@ def run_apply(command: dict) -> None:
 
         while step < MAX_PLANNER_STEPS:
             step += 1
-            send_progress(f"Planner step {step}/{MAX_PLANNER_STEPS}")
+            send_progress(f"Planner step {step}/{MAX_PLANNER_STEPS}", nova.page)
 
             sys_prompt = """You orchestrate a browser agent (Nova Act) applying for a job.
 Return ONLY a JSON object with keys:
@@ -359,9 +380,10 @@ What should the browser agent do next?"""
                 meta = getattr(act_result, "metadata", None)
                 steps = getattr(meta, "num_steps_executed", None) if meta else None
                 last_summary = f"Phase {plan.get('phase')}: completed act ({steps or '?'} steps)."
+                send_progress(last_summary, nova.page)
             except Exception as e:
                 last_summary = f"Act error: {e}"
-                send_progress(last_summary)
+                send_progress(last_summary, nova.page)
 
         send_error("Exceeded maximum planner steps without completion")
 

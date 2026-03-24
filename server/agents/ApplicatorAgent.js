@@ -10,6 +10,7 @@ import { getStoredSessionCookies } from '../services/sessionCookies.js';
 import { dataRoot } from '../lib/dataPath.js';
 import path from 'path';
 import fs from 'fs/promises';
+import { recordApplyLiveFrame, clearApplyLiveFrame } from '../services/applyLiveFrame.js';
 
 export default class ApplicatorAgent extends BaseAgent {
   constructor(options = {}) {
@@ -80,7 +81,9 @@ export default class ApplicatorAgent extends BaseAgent {
       pdf: path.basename(pdfPath),
     });
 
-    const result = await applyToJob(job, cvAssets, profile, artifacts, {
+    let result;
+    try {
+      result = await applyToJob(job, cvAssets, profile, artifacts, {
       knowledgePack,
       liAtCookie,
       sessionCookies,
@@ -89,7 +92,10 @@ export default class ApplicatorAgent extends BaseAgent {
       novaActApiKey: process.env.NOVA_ACT_API_KEY,
       plannerModel: process.env.GROQ_NOVA_PLANNER_MODEL,
       headless: process.env.NOVA_ACT_HEADLESS === 'true',
-      onProgress: (msg) => this.log('apply_progress', { applicationId, message: msg }),
+      onProgress: (msg, liveShot) => {
+        this.log('apply_progress', { applicationId, message: msg });
+        if (liveShot) recordApplyLiveFrame(applicationId, liveShot);
+      },
       onBlocker: async (reason, screenshot, url) => {
         const blocker = await createBlocker(applicationId, reason, screenshot, url);
         this.log('apply_blocked', { applicationId, blockerId: blocker.id, reason });
@@ -97,6 +103,9 @@ export default class ApplicatorAgent extends BaseAgent {
         return blocker;
       },
     });
+    } finally {
+      clearApplyLiveFrame(applicationId);
+    }
 
     if (result.success && result.verified !== false) {
       const shots = normalizeApplyScreenshots(result);

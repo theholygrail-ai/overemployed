@@ -6,8 +6,14 @@
     "api/[...path].mjs": {
       "maxDuration": 300
     },
+    "api/hitl/[...segments].mjs": {
+      "maxDuration": 300
+    },
     "api/jobs/[id]/apply.mjs": {
       "maxDuration": 300
+    },
+    "api/jobs/[id]/live-frame.mjs": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

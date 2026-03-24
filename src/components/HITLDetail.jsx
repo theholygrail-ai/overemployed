@@ -30,10 +30,12 @@ export default function HITLDetail() {
   const [actionLog, setActionLog] = useState([]);
   const [sending, setSending] = useState(false);
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const imgRef = useRef(null);
 
   const fetchBlocker = useCallback(async () => {
     try {
+      setLoadError(null);
       const res = await apiFetch(`/hitl/${id}`);
       if (res.ok) {
         const data = await res.json();
@@ -41,9 +43,17 @@ export default function HITLDetail() {
         if (data.status !== 'pending') {
           addLog(`Blocker ${data.status}`);
         }
+      } else {
+        const t = await res.text();
+        setLoadError(t || `HTTP ${res.status}`);
+        setBlocker(null);
       }
-    } catch { /* silent */ }
-    finally { setLoading(false); }
+    } catch (e) {
+      setLoadError(e?.message || 'Failed to load intervention');
+      setBlocker(null);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -151,7 +161,10 @@ export default function HITLDetail() {
   if (!blocker) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyText}>Blocker not found</Text>
+        <Text style={styles.emptyText}>{loadError || 'Blocker not found'}</Text>
+        <Text style={[styles.emptyText, { fontSize: theme.fonts.sm, marginTop: 8 }]}>
+          If you use Vercel, ensure /api/hitl/* is proxied (BACKEND_URL) and the blocker id in the URL matches the API.
+        </Text>
         <TouchableOpacity onPress={() => navigate('/interventions')} style={styles.backBtn}>
           <Text style={styles.backBtnText}>Back to Interventions</Text>
         </TouchableOpacity>

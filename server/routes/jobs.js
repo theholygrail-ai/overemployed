@@ -23,6 +23,7 @@ import { getApplyProofBuffer, getApplyProofMeta } from '../services/applyProof.j
 import { getMemoryKey } from '../services/memory.js';
 import { getDocxPath, generateDocx } from '../services/docxFormatter.js';
 import { getPdfPath, generatePdf } from '../services/cvPdf.js';
+import { getApplyLiveFrameBuffer } from '../services/applyLiveFrame.js';
 
 const router = Router();
 
@@ -99,6 +100,19 @@ router.get('/api/jobs/:id/apply-proof/:index', async (req, res, next) => {
     }
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'private, max-age=3600');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Latest Nova / automation viewport frame while status is applying (throttled on server). */
+router.get('/api/jobs/:id/live-frame', async (req, res, next) => {
+  try {
+    const buf = getApplyLiveFrameBuffer(req.params.id);
+    if (!buf) return res.status(204).end();
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.send(buf);
   } catch (err) {
     next(err);

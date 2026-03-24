@@ -212,9 +212,13 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
         }
 
         switch (event.type) {
-          case 'progress':
-            onProgress?.(event.message);
+          case 'progress': {
+            const msg = event.message;
+            const shot = event.screenshot ? Buffer.from(event.screenshot, 'base64') : null;
+            if (shot) onProgress?.(msg, shot);
+            else onProgress?.(msg);
             break;
+          }
 
           case 'blocker': {
             const screenshot = event.screenshot ? Buffer.from(event.screenshot, 'base64') : undefined;
