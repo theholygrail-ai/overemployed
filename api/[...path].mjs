@@ -1,9 +1,23 @@
 /**
  * Vercel serverless proxy: browser → https://<vercel>/api/* → http(s)://<EC2>/api/*
  * Avoids mixed-content blocking (HTTPS page cannot fetch http:// APIs).
- * Set BACKEND_URL in Vercel (Production) to your API origin, e.g. http://1.2.3.4:4900
+ *
+ * Set one of (Vercel → Project → Settings → Environment Variables → Production, then redeploy):
+ *   BACKEND_URL, API_ORIGIN, or OVEREMPLOYED_BACKEND_URL
+ * Value: EC2 API origin only, e.g. http://1.2.3.4:4900 (no trailing slash; not .../api).
  * Leave VITE_API_URL unset so the SPA uses same-origin /api (see src/config.js).
  */
+function resolveBackendUrl() {
+  const raw =
+    process.env.BACKEND_URL ||
+    process.env.API_ORIGIN ||
+    process.env.OVEREMPLOYED_BACKEND_URL ||
+    '';
+  let o = raw.trim().replace(/\/$/, '');
+  if (o.endsWith('/api')) o = o.slice(0, -4).replace(/\/$/, '');
+  return o;
+}
+
 const HOP = new Set([
   'connection',
   'keep-alive',
@@ -39,13 +53,14 @@ function buildTargetHeaders(req) {
 }
 
 export default async function handler(req, res) {
-  const backend = (process.env.BACKEND_URL || '').trim().replace(/\/$/, '');
+  const backend = resolveBackendUrl();
   if (!backend) {
     res.status(503).setHeader('Content-Type', 'application/json');
     res.end(
       JSON.stringify({
-        error:
-          'BACKEND_URL is not set on Vercel. Add it (server-only env) to your EC2 API origin, e.g. http://x.x.x.x:4900. Unset VITE_API_URL so the app uses this proxy.',
+        error: 'Backend URL is not configured on Vercel.',
+        hint:
+          'In Vercel: Project → Settings → Environment Variables → add BACKEND_URL (or API_ORIGIN) = http://YOUR_EC2_IP:4900 for Production (and Preview if you use it). Remove or empty VITE_API_URL. Redeploy.',
       })
     );
     return;
