@@ -26,6 +26,7 @@ If the API runs on EC2 (see `docs/DEPLOY-AWS.md` and `scripts/aws-provision/READ
 
 - Example production frontend: [overemployed-five.vercel.app](https://overemployed-five.vercel.app/). Set **`FRONTEND_URL` / `FRONTEND_URLS`** on the API (via `npm run sync:ec2-secrets` + `.env`) so CORS allows that origin.
 - **Mixed content:** do **not** set `VITE_API_URL` to `http://…` while the site is served on `https://…`. The browser will show **“Failed to fetch”**. Instead, set **`BACKEND_URL`** on Vercel to `http://<EC2_IP>:4900` and **leave `VITE_API_URL` unset** so the SPA uses same-origin `/api/*`, which the Vercel serverless route `api/[...path].mjs` proxies to EC2.
+- **Nova / apply:** Nothing on EC2 (Docker, env, `ApplicatorAgent`) changes. The UI still talks to the same Express routes. In-process apply on EC2 can run a long time; [`vercel.json`](../vercel.json) sets `maxDuration` for the proxy (300s on supported plans). If apply hits a platform time limit, use **worker Lambda** (`invokeOrchestratorAsync`, returns quickly), put **HTTPS** on the API and set `VITE_API_URL` to skip the proxy, or run the UI against **local Vite** for testing.
 - Optional: put **Caddy**, **nginx + Let’s Encrypt**, or **Cloudflare** in front of EC2 and then you can set **`VITE_API_URL`** to `https://…` directly (no proxy).
 - **`npm run sync:ec2-secrets`** merges local `.env` into AWS Secrets Manager; then SSM refresh (`scripts/aws-provision/ssm-refresh-env.json`) updates `/opt/overemployed/.env` on the instance.
 
