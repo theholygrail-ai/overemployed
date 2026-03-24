@@ -6,10 +6,12 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import OrchestratorAgent from './agents/OrchestratorAgent.js';
-import { setRunState } from './services/runState.js';
+import { getRunState, setRunState, appendRunActivity } from './services/runState.js';
 import { resolveRunCriteria } from './services/jobSearchCriteria.js';
 
-function noopBroadcast() {}
+function persistBroadcast(event) {
+  appendRunActivity(event).catch((e) => console.error('[worker-lambda] appendRunActivity:', e.message));
+}
 
 export async function handler(event) {
   let payload = event;
@@ -20,19 +22,36 @@ export async function handler(event) {
   }
 
   const action = payload?.action || 'run';
-  const broadcast = noopBroadcast;
+  const broadcast = persistBroadcast;
 
   if (action === 'run') {
-    await setRunState({ running: true, lastRunResult: null });
+    await setRunState({ running: true, lastRunResult: null, activityLog: [] });
     try {
       const orchestrator = new OrchestratorAgent({ broadcast });
       const criteria = await resolveRunCriteria(payload.criteria);
       const lastRunResult = await orchestrator.run(criteria);
-      await setRunState({ running: false, lastRunResult });
+      const st = await getRunState();
+      const merged = { ...lastRunResult, runToken: st.runToken };
+      await setRunState({ running: false, lastRunResult: merged });
+      const j = lastRunResult?.jobsFound ?? 0;
+      const c = lastRunResult?.cvsGenerated ?? 0;
+      const s = lastRunResult?.stored ?? 0;
+      await persistBroadcast({ type: 'agent:status', status: 'idle', message: 'Pipeline idle' });
+      await persistBroadcast({
+        type: 'agent:run_complete',
+        result: merged,
+        message: `Done — ${j} jobs found, ${c} CVs generated, ${s} saved`,
+      });
       return { ok: true, lastRunResult };
     } catch (err) {
       console.error('[worker-lambda] run error:', err);
-      await setRunState({ running: false, lastRunResult: { error: err.message } });
+      const st = await getRunState();
+      await setRunState({ running: false, lastRunResult: { error: err.message, runToken: st.runToken } });
+      await persistBroadcast({
+        type: 'agent:run_error',
+        error: err.message,
+        message: `Run failed: ${err.message}`,
+      });
       throw err;
     }
   }

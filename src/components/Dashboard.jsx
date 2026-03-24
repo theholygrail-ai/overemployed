@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigate } from 'react-router-dom';
-import { useApi, apiGet } from '../hooks/useApi';
+import { useApi, apiGet, apiPost } from '../hooks/useApi';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { getWsUrl } from '../config.js';
 import { timeAgo, formatDateTime } from '../utils/formatters';
@@ -25,6 +25,7 @@ export default function Dashboard() {
   const [linkedInStatus, setLinkedInStatus] = useState(null);
   const safetyTimerRef = useRef(null);
   const runCooldownRef = useRef(0);
+  const pendingRunTokenRef = useRef(null);
 
   const clearSafetyTimer = useCallback(() => {
     if (safetyTimerRef.current) {
@@ -53,17 +54,21 @@ export default function Dashboard() {
     setRunError(null);
     setLastResult(null);
     seenServerRunningRef.current = false;
+    pendingRunTokenRef.current = null;
     setRunning(true);
     clearSafetyTimer();
     safetyTimerRef.current = setTimeout(() => {
       setRunning(false);
+      pendingRunTokenRef.current = null;
       setRunError('No completion signal received (timeout). Check WebSocket or server logs.');
     }, RUN_SAFETY_MS);
     try {
-      await api.post('/agents/run');
+      const body = await apiPost('/agents/run', {});
+      pendingRunTokenRef.current = body?.runToken ?? null;
     } catch (e) {
       clearSafetyTimer();
       setRunning(false);
+      pendingRunTokenRef.current = null;
       setRunError(e?.message || 'Failed to start pipeline');
     }
   };
@@ -75,6 +80,7 @@ export default function Dashboard() {
     if (last.type === 'agent:run_complete') {
       clearSafetyTimer();
       setRunning(false);
+      pendingRunTokenRef.current = null;
       setLastResult(last.result ?? null);
       setRunError(null);
       refreshMetrics();
@@ -83,6 +89,7 @@ export default function Dashboard() {
     if (last.type === 'agent:run_error') {
       clearSafetyTimer();
       setRunning(false);
+      pendingRunTokenRef.current = null;
       setRunError(last.error || 'Unknown error');
       setLastResult(null);
       refreshMetrics();
@@ -104,21 +111,29 @@ export default function Dashboard() {
         }
         if (data.status !== 'idle' || data.lastRunResult == null) return;
 
-        const err = data.lastRunResult?.error;
-        const canFinish =
-          seenServerRunningRef.current ||
-          Boolean(err) ||
-          data.lastRunResult?.jobsFound !== undefined;
+        const lr = data.lastRunResult;
+        const err = lr?.error;
+        const pending = pendingRunTokenRef.current;
+        let canFinish = false;
+        if (pending) {
+          canFinish = Boolean(err && lr?.runToken === pending) || Boolean(!err && lr?.runToken === pending);
+        } else {
+          canFinish =
+            seenServerRunningRef.current ||
+            Boolean(err) ||
+            (lr && !err && typeof lr.jobsFound === 'number');
+        }
         if (!canFinish) return;
 
         clearSafetyTimer();
+        pendingRunTokenRef.current = null;
         if (err) {
           setRunning(false);
           setRunError(typeof err === 'string' ? err : 'Pipeline failed');
           setLastResult(null);
         } else {
           setRunning(false);
-          setLastResult(data.lastRunResult);
+          setLastResult(lr);
           setRunError(null);
         }
         refreshMetrics();

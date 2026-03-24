@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Router } from 'express';
 import OrchestratorAgent from '../agents/OrchestratorAgent.js';
 import { setBroadcast } from '../services/hitl.js';
@@ -10,54 +11,82 @@ import { resolveRunCriteria } from '../services/jobSearchCriteria.js';
 export function createAgentRoutes(broadcast) {
   const router = Router();
 
+  /** Prevents parallel POST /run from passing the idle check before any run sets `running: true`. */
+  let isAgentsRunStarting = false;
+
   router.post('/api/agents/run', requireApiKey, async (req, res, next) => {
-    const state = await getRunState();
-    if (state.running) {
+    if (isAgentsRunStarting) {
       return res.status(409).json({ error: 'An agent run is already in progress' });
     }
+    isAgentsRunStarting = true;
+    let runOrchestratorLocally = false;
 
-    try { req.setTimeout(600_000); } catch {}
-    try { res.setTimeout(600_000); } catch {}
-
-    if (shouldUseWorkerLambda()) {
+    try {
       try {
-        await setRunState({ running: true, lastRunResult: null });
-        broadcast({
-          type: 'agent:status',
-          status: 'running',
-          message: 'Pipeline started — searching for jobs',
-        });
-        await invokeOrchestratorAsync({
-          action: 'run',
-          criteria: req.body?.criteria,
-        });
-        return res.json({
-          status: 'started',
-          message: 'Pipeline started on worker Lambda. Poll GET /api/agents/status.',
-        });
-      } catch (err) {
-        console.error('[agents/run] Invoke error:', err.message);
-        await setRunState({ running: false, lastRunResult: { error: err.message } });
-        broadcast({
-          type: 'agent:run_error',
-          error: err.message,
-          message: `Run failed: ${err.message}`,
-        });
-        return res.status(500).json({ error: err.message || 'Failed to start pipeline on worker' });
+        req.setTimeout(600_000);
+      } catch {}
+      try {
+        res.setTimeout(600_000);
+      } catch {}
+
+      const state = await getRunState();
+      if (state.running) {
+        return res.status(409).json({ error: 'An agent run is already in progress' });
       }
+
+      if (shouldUseWorkerLambda()) {
+        const runToken = randomUUID();
+        try {
+          await setRunState({ running: true, lastRunResult: null, activityLog: [], runToken });
+          broadcast({
+            type: 'agent:status',
+            status: 'running',
+            message: 'Pipeline started — searching for jobs',
+          });
+          await invokeOrchestratorAsync({
+            action: 'run',
+            criteria: req.body?.criteria,
+          });
+          return res.json({
+            status: 'started',
+            runToken,
+            message: 'Pipeline started on worker Lambda. Poll GET /api/agents/status.',
+          });
+        } catch (err) {
+          console.error('[agents/run] Invoke error:', err.message);
+          const st = await getRunState();
+          await setRunState({
+            running: false,
+            lastRunResult: { error: err.message, runToken: st.runToken },
+          });
+          broadcast({
+            type: 'agent:run_error',
+            error: err.message,
+            message: `Run failed: ${err.message}`,
+          });
+          return res.status(500).json({ error: err.message || 'Failed to start pipeline on worker' });
+        }
+      }
+
+      const runToken = randomUUID();
+      await setRunState({ running: true, lastRunResult: null, activityLog: [], runToken });
+      broadcast({
+        type: 'agent:status',
+        status: 'running',
+        message: 'Pipeline started — searching for jobs',
+      });
+
+      res.json({
+        status: 'started',
+        runToken,
+        message: 'Pipeline started. Track progress via WebSocket or GET /api/agents/status.',
+      });
+      runOrchestratorLocally = true;
+    } finally {
+      isAgentsRunStarting = false;
     }
 
-    await setRunState({ running: true, lastRunResult: null });
-    broadcast({
-      type: 'agent:status',
-      status: 'running',
-      message: 'Pipeline started — searching for jobs',
-    });
-
-    res.json({
-      status: 'started',
-      message: 'Pipeline started. Track progress via WebSocket or GET /api/agents/status.',
-    });
+    if (!runOrchestratorLocally) return;
 
     try {
       const criteria = await resolveRunCriteria(req.body?.criteria);
@@ -67,16 +96,22 @@ export function createAgentRoutes(broadcast) {
       const j = lastRunResult?.jobsFound ?? 0;
       const c = lastRunResult?.cvsGenerated ?? 0;
       const s = lastRunResult?.stored ?? 0;
-      await setRunState({ running: false, lastRunResult });
+      const st = await getRunState();
+      const merged = { ...lastRunResult, runToken: st.runToken };
+      await setRunState({ running: false, lastRunResult: merged });
       broadcast({ type: 'agent:status', status: 'idle', message: 'Pipeline idle' });
       broadcast({
         type: 'agent:run_complete',
-        result: lastRunResult,
+        result: merged,
         message: `Done — ${j} jobs found, ${c} CVs generated, ${s} saved`,
       });
     } catch (err) {
       console.error('[agents/run] Pipeline error:', err.message);
-      await setRunState({ running: false, lastRunResult: { error: err.message } });
+      const st = await getRunState();
+      await setRunState({
+        running: false,
+        lastRunResult: { error: err.message, runToken: st.runToken },
+      });
       broadcast({ type: 'agent:status', status: 'idle', message: 'Pipeline idle' });
       broadcast({
         type: 'agent:run_error',
@@ -98,7 +133,12 @@ export function createAgentRoutes(broadcast) {
 
   router.get('/api/agents/status', async (req, res) => {
     const s = await getRunState();
-    res.json({ status: s.running ? 'running' : 'idle', lastRunResult: s.lastRunResult });
+    res.json({
+      status: s.running ? 'running' : 'idle',
+      lastRunResult: s.lastRunResult,
+      activityLog: s.activityLog ?? [],
+      runToken: s.runToken ?? null,
+    });
   });
 
   router.post('/api/jobs/:id/apply', requireApiKey, async (req, res, next) => {

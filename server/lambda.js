@@ -7,9 +7,12 @@ dotenv.config();
 
 import serverlessExpress from '@codegenie/serverless-express';
 import { createApp } from './app.js';
+import { appendRunActivity } from './services/runState.js';
 
 const app = createApp({
-  broadcast: () => {},
+  broadcast: (event) => {
+    appendRunActivity(event).catch(() => {});
+  },
 });
 
 export const handler = serverlessExpress({ app });

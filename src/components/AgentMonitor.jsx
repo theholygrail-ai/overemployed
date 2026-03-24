@@ -12,6 +12,35 @@ const PIPELINE_STAGES = [
   { key: 'reviewer', label: 'Reviewer', icon: '✓' },
 ];
 
+function normalizeAgentToStageKey(agent) {
+  if (!agent || typeof agent !== 'string') return '';
+  return agent.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+}
+
+function inferStagesFromLogEntries(mapped) {
+  const base = Object.fromEntries(PIPELINE_STAGES.map((s) => [s.key, 'idle']));
+  const order = ['orchestrator', 'researcher', 'cv_generator', 'reviewer'];
+  for (const e of mapped) {
+    if (!e.agent) continue;
+    const k = normalizeAgentToStageKey(e.agent);
+    const idx = order.indexOf(k);
+    if (idx < 0) continue;
+    for (let i = 0; i < idx; i++) {
+      const ok = order[i];
+      if (base[ok] !== 'error') base[ok] = 'complete';
+    }
+    base[k] = 'running';
+  }
+  const last = mapped[mapped.length - 1];
+  if (last?.type === 'agent:run_complete') {
+    for (const k of order) base[k] = 'complete';
+  }
+  if (last?.type === 'agent:run_error' || last?.error) {
+    base.orchestrator = 'error';
+  }
+  return base;
+}
+
 const STAGE_COLORS = {
   idle: theme.colors.textMuted,
   running: theme.colors.warning,
@@ -23,6 +52,7 @@ export default function AgentMonitor() {
   const { messages, connected, wsConnected, usingWebSocket } = useWebSocket();
   const wsUrl = useMemo(() => getWsUrl(), []);
   const lastPollKeyRef = useRef('');
+  const lastActivitySigRef = useRef('');
   const [stages, setStages] = useState(
     Object.fromEntries(PIPELINE_STAGES.map((s) => [s.key, 'idle']))
   );
@@ -34,7 +64,7 @@ export default function AgentMonitor() {
     const msg = messages[messages.length - 1];
 
     if (msg.agent) {
-      const stageKey = msg.agent.toLowerCase().replace(/\s+/g, '_');
+      const stageKey = normalizeAgentToStageKey(msg.agent);
       if (stages[stageKey] !== undefined) {
         setStages((prev) => ({
           ...prev,
@@ -55,7 +85,7 @@ export default function AgentMonitor() {
     }
   }, [log]);
 
-  /** When WebSocket is unavailable, mirror coarse pipeline state from REST. */
+  /** When WebSocket is unavailable, mirror pipeline state from REST (activityLog + coarse fallback). */
   useEffect(() => {
     if (wsUrl && wsConnected) return;
 
@@ -63,7 +93,31 @@ export default function AgentMonitor() {
       try {
         const data = await apiGet('/agents/status');
         if (!data) return;
-        const key = `${data.status}-${data.lastRunResult?.error || ''}-${data.lastRunResult?.jobsFound ?? ''}`;
+
+        const logs = Array.isArray(data.activityLog) ? data.activityLog : [];
+        if (logs.length > 0) {
+          const actSig = `${logs.length}-${logs[logs.length - 1]?.timestamp || ''}`;
+          if (actSig !== lastActivitySigRef.current) {
+            lastActivitySigRef.current = actSig;
+            const mapped = logs.map((e, i) => ({
+              type: e.type || 'agent_log',
+              message:
+                e.message ||
+                (e.agent && e.event ? `${e.agent}: ${e.event}` : e.agent || e.event || ''),
+              agent: e.agent,
+              status: e.status,
+              event: e.event,
+              error: e.error,
+              _logTs: Date.parse(e.timestamp) || Date.now() + i,
+              _fromPoll: true,
+            }));
+            setLog(mapped.slice(-200));
+            setStages(inferStagesFromLogEntries(mapped));
+          }
+          return;
+        }
+
+        const key = `${data.status}-${data.lastRunResult?.error || ''}-${data.lastRunResult?.jobsFound ?? ''}-${data.lastRunResult?.runToken || ''}`;
         if (key === lastPollKeyRef.current) return;
         lastPollKeyRef.current = key;
 

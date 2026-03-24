@@ -20,6 +20,7 @@ import { createApp } from './app.js';
 import { startScheduler } from './services/scheduler.js';
 import OrchestratorAgent from './agents/OrchestratorAgent.js';
 import { resolveRunCriteria } from './services/jobSearchCriteria.js';
+import { appendRunActivity } from './services/runState.js';
 
 const PORT = process.env.PORT || 4900;
 const server = http.createServer();
@@ -31,6 +32,7 @@ server.headersTimeout = 610_000;
 const wss = new WebSocketServer({ server });
 
 function broadcast(event) {
+  appendRunActivity(event).catch(() => {});
   const data = JSON.stringify(event);
   for (const client of wss.clients) {
     if (client.readyState === 1) {
