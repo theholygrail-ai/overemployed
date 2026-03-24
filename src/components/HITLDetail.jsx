@@ -34,7 +34,7 @@ export default function HITLDetail() {
   const [extensionDlBusy, setExtensionDlBusy] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [screenshotBroken, setScreenshotBroken] = useState(false);
-  /** Object URL from GET /jobs/:id/live-frame — live Playwright viewport (~1fps during HITL) */
+  /** Object URL from GET /jobs/:id/live-frame — live automation viewport (~1fps during HITL) */
   const [liveViewportUrl, setLiveViewportUrl] = useState(null);
   const imgRef = useRef(null);
   const viewportRef = useRef(null);
@@ -335,7 +335,7 @@ export default function HITLDetail() {
               >
                 {screenshotBroken && !hasLiveViewport
                   ? 'Could not load static screenshot from API. Live viewport appears while the apply worker is running (same API as Jobs). Check BACKEND_URL / VITE_API_URL.'
-                  : 'Waiting for live viewport from the apply worker (AWS Lambda browser or Nova Act on EC2). If this persists, the worker may have exited — open Jobs to confirm status.'}
+                  : 'Waiting for live viewport from the Nova Act apply worker. If this persists, the worker may have exited — open Jobs to confirm status.'}
               </div>
             )}
             <img

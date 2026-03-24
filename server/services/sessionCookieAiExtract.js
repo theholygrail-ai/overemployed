@@ -8,7 +8,7 @@ import { parseCookiesInput } from './sessionCookies.js';
 const MODEL = process.env.GROQ_SESSION_EXTRACT_MODEL || 'openai/gpt-oss-120b';
 const MAX_RAW_CHARS = 150_000;
 
-const SYSTEM_PROMPT = `You extract browser session data for job-application automation (Playwright/Puppeteer).
+const SYSTEM_PROMPT = `You extract browser session data for job-application automation (Nova Act applies use these cookies in the browser worker).
 
 The user pastes messy data: Chrome DevTools Application storage export, Network tab response JSON, HAR fragments, cookie header strings, or arrays of cookie-like objects.
 

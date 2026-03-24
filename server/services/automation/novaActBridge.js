@@ -3,6 +3,12 @@ import path from 'path';
 import { waitForResolution } from '../hitl.js';
 import { resolveNovaRunnerPaths, getDockerHostDataPathForNova } from './novaDockerPaths.js';
 
+const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+
+function pythonBin() {
+  return (process.env.PYTHON_BIN || 'python3').trim() || 'python3';
+}
+
 let cachedAvailability = null;
 let cachedAt = 0;
 /** @type {string | null} */
@@ -29,7 +35,7 @@ export async function isNovaActAvailable() {
     { docxPath: path.join(process.cwd(), 'data', '.probe'), pdfPath: path.join(process.cwd(), 'data', '.probe') },
     [],
   );
-  const mode = paths.useDocker ? 'docker' : 'wsl';
+  const mode = paths.useDocker ? 'docker' : isLambda ? 'lambda' : 'wsl';
 
   if (
     cachedAvailability !== null &&
@@ -54,6 +60,14 @@ export async function isNovaActAvailable() {
         ],
         { stdio: ['ignore', 'pipe', 'pipe'] },
       );
+      let stdout = '';
+      proc.stdout.on('data', chunk => { stdout += chunk; });
+      proc.on('close', code => resolve(code === 0 && stdout.trim() === 'ok'));
+      proc.on('error', () => resolve(false));
+    } else if (isLambda) {
+      const proc = spawn(pythonBin(), ['-c', 'import nova_act; print("ok")'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       let stdout = '';
       proc.stdout.on('data', chunk => { stdout += chunk; });
       proc.on('close', code => resolve(code === 0 && stdout.trim() === 'ok'));
@@ -161,14 +175,23 @@ export async function applyWithNovaAct(job, cvAssets, profile, artifacts, option
       `NOVA_ACT_MODEL_ID=${novaActModelId || process.env.NOVA_ACT_MODEL_ID || ''}`,
       DOCKER_IMAGE,
     ];
+  } else if (isLambda) {
+    spawnCmd = pythonBin();
+    spawnArgs = ['-u', runner.scriptPath];
   } else {
     spawnCmd = 'wsl';
     spawnArgs = ['python3', '-u', runner.scriptPath];
   }
 
+  const childEnv = { ...process.env };
+  if (isLambda) {
+    childEnv.HOME = childEnv.HOME || '/tmp';
+  }
+
   return new Promise((resolve, reject) => {
     const proc = spawn(spawnCmd, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: childEnv,
     });
 
     let stderr = '';

@@ -10,7 +10,6 @@
     "build": "npm run package:extension && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
     "package:extension": "node scripts/package-extension.js",
     "setup-aws": "node scripts/setup-aws.js",
     "sync:ec2-secrets": "node scripts/sync-ec2-secrets.mjs",
@@ -26,7 +25,6 @@
     "@aws-sdk/credential-providers": "latest",
     "@aws-sdk/lib-dynamodb": "latest",
     "@codegenie/serverless-express": "^4.14.1",
-    "@sparticuz/chromium": "^143.0.4",
     "axios": "latest",
     "cors": "latest",
     "docx": "^9.6.1",
@@ -38,8 +36,6 @@
     "node-cron": "latest",
     "openai": "latest",
     "pdfkit": "^0.15.2",
-    "playwright": "^1.58.2",
-    "puppeteer-core": "^24.40.0",
     "react": "latest",
     "react-dom": "latest",
     "react-native-web": "latest",
@@ -48,7 +44,6 @@
     "ws": "latest"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
     "@vitejs/plugin-react": "latest",
     "archiver": "^7.0.1",
     "concurrently": "latest",

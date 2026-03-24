@@ -1,5 +1,15 @@
-# AWS Lambda container image — HTTP API + worker (handler set via ImageConfig in SAM)
+# AWS Lambda container — Node HTTP API + worker + Nova Act apply (Python).
+# Apply uses scripts/nova_act_agent.py and the official nova-act SDK only.
+# Chromium for Nova Act is installed via `python -m playwright` as required by the SDK (not a separate JS automation stack).
 FROM public.ecr.aws/lambda/nodejs:20
+
+RUN dnf install -y python3 python3-pip \
+  && python3 -m pip install --no-cache-dir --upgrade pip \
+  && python3 -m pip install --no-cache-dir "nova-act>=3.0" \
+  && python3 -m playwright install chromium --with-deps || python3 -m playwright install chromium || true
+
+ENV PYTHON_BIN=/usr/bin/python3
+ENV NODE_ENV=production
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
@@ -9,15 +19,6 @@ RUN npm ci --omit=dev
 COPY server ./server
 COPY context ./context
 COPY scripts ./scripts
-
-# Puppeteer 24+ can resolve headless shell to ~/.cache/ms-playwright; pre-install so any
-# transitive puppeteer (e.g. linkedin-jobs-scraper) or shell-mode path finds the binary.
-# @sparticuz/chromium remains the primary browser for apply (lambdaBrowserEngine.js).
-RUN npx --yes playwright@1.51.0 install chromium \
-  && du -sh /root/.cache/ms-playwright 2>/dev/null || true
-
-ENV NODE_ENV=production
-ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 # Overridden per function in sam/template.yaml (server/lambda.handler vs server/worker-lambda.handler)
 CMD ["server/lambda.handler"]

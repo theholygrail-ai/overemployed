@@ -8,7 +8,7 @@ import { getMemoryKey, setMemoryKey } from './memory.js';
 const MEMORY_KEY = 'sessionCookies';
 
 /**
- * Normalize a single cookie object for Puppeteer / Playwright.
+ * Normalize a single cookie object for Nova Act browser session injection.
  */
 function normalizeCookieObject(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -147,50 +147,4 @@ export async function mergeSessionCookies(incoming) {
 
 export async function clearSessionCookies() {
   await setMemoryKey(MEMORY_KEY, null);
-}
-
-/**
- * Apply cookies to a Puppeteer page before navigation.
- */
-export async function applyCookiesToPuppeteerPage(page, cookies) {
-  if (!cookies?.length) return 0;
-  let applied = 0;
-  for (const c of cookies) {
-    try {
-      await page.setCookie(c);
-      applied++;
-    } catch (err) {
-      console.warn('[sessionCookies] setCookie failed:', c?.name, c?.domain, err.message);
-    }
-  }
-  return applied;
-}
-
-/**
- * Apply cookies to a Playwright BrowserContext before newPage.
- */
-export async function applyCookiesToPlaywrightContext(context, cookies) {
-  if (!cookies?.length) return 0;
-  const mapped = cookies.map((c) => {
-    const o = {
-      name: c.name,
-      value: c.value,
-      domain: c.domain,
-      path: c.path || '/',
-    };
-    if (c.expires != null) o.expires = c.expires;
-    if (typeof c.httpOnly === 'boolean') o.httpOnly = c.httpOnly;
-    if (typeof c.secure === 'boolean') o.secure = c.secure;
-    if (c.sameSite === 'Strict' || c.sameSite === 'Lax' || c.sameSite === 'None') {
-      o.sameSite = c.sameSite;
-    }
-    return o;
-  });
-  try {
-    await context.addCookies(mapped);
-    return mapped.length;
-  } catch (err) {
-    console.warn('[sessionCookies] Playwright addCookies failed:', err.message);
-    return 0;
-  }
 }

@@ -27,6 +27,11 @@ Parameters:
     NoEcho: true
     Default: ''
     Description: Optional shared secret; set same value as VITE_API_KEY on Vercel
+  NovaActApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Amazon Nova Act API key (apply automation). Can also set on the function in console.
 
 Globals:
   Function:
@@ -41,6 +46,7 @@ Globals:
         ADZUNA_APP_ID: !Ref AdzunaAppId
         ADZUNA_APP_KEY: !Ref AdzunaAppKey
         API_KEY: !Ref ApiKey
+        NOVA_ACT_API_KEY: !Ref NovaActApiKey
         FRONTEND_URLS: !Ref FrontendOrigins
         ENABLE_NODE_CRON: 'false'
 

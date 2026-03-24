@@ -46,7 +46,7 @@ The Vercel SPA can send the same secret via `VITE_API_KEY` (build-time env) so t
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/jobs/:id/apply` | Run applicator (Nova Act / Playwright) for `applicationId` |
+| POST | `/api/jobs/:id/apply` | Run applicator (Nova Act — EC2, local, or Lambda container) for `applicationId` |
 
 ## Schedule
 
@@ -68,7 +68,7 @@ The Vercel SPA can send the same secret via `VITE_API_KEY` (build-time env) so t
 
 ## Session cookies (automation)
 
-Stored in operator memory (`memory.json` / S3). Applied with `page.setCookie` / Playwright `addCookies` **before** navigating to the job URL.
+Stored in operator memory (`memory.json` / S3). Injected into the Nova Act Python worker as browser cookies before navigating to the job URL.
 
 | Method | Path | Description |
 |--------|------|-------------|
