@@ -9,8 +9,12 @@ import OrchestratorAgent from './agents/OrchestratorAgent.js';
 import { getRunState, setRunState, appendRunActivity } from './services/runState.js';
 import { resolveRunCriteria } from './services/jobSearchCriteria.js';
 
-function persistBroadcast(event) {
-  appendRunActivity(event).catch((e) => console.error('[worker-lambda] appendRunActivity:', e.message));
+async function persistBroadcast(event) {
+  try {
+    await appendRunActivity(event);
+  } catch (e) {
+    console.error('[worker-lambda] appendRunActivity:', e.message);
+  }
 }
 
 export async function handler(event) {
