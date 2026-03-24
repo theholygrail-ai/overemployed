@@ -116,5 +116,15 @@ export async function apiFetch(path, options = {}) {
   if (['POST', 'PATCH', 'PUT'].includes(method) && options.body != null && !isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  return fetch(url, { ...options, headers });
+  try {
+    return await fetch(url, { ...options, headers });
+  } catch (e) {
+    const msg = e?.message || String(e);
+    if (msg === 'Failed to fetch' || e?.name === 'TypeError') {
+      throw new Error(
+        'Failed to fetch — HTTPS cannot call http:// APIs. Unset VITE_API_URL and set BACKEND_URL on Vercel, or use an https:// API (see vercel.env.example).'
+      );
+    }
+    throw e;
+  }
 }

@@ -10,10 +10,23 @@ async function request(path, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (e) {
+    const msg = e?.message || String(e);
+    if (msg === 'Failed to fetch' || e?.name === 'TypeError') {
+      throw new Error(
+        'Failed to fetch — HTTPS sites cannot call http:// APIs (mixed content). ' +
+          'On Vercel: unset VITE_API_URL and set BACKEND_URL to your EC2 API so /api is proxied (see vercel.env.example). ' +
+          'Or put TLS in front of your API and use an https:// VITE_API_URL.'
+      );
+    }
+    throw e;
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(body || `Request failed: ${res.status}`);
