@@ -46,6 +46,7 @@ export function createAgentRoutes(broadcast) {
           await invokeOrchestratorAsync({
             action: 'run',
             criteria: req.body?.criteria,
+            runToken,
           });
           return res.json({
             status: 'started',

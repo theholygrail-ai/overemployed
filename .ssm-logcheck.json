@@ -1,0 +1,1 @@
+{"commands":["cd /opt/overemployed","docker compose logs --tail=200 api | grep -i -E 'apply|nova|error|failed' || true"]}

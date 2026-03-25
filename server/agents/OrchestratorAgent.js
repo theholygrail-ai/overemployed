@@ -89,10 +89,14 @@ export default class OrchestratorAgent extends BaseAgent {
       errorCount: errors.length,
     };
 
-    await this.remember('lastRun', runSummary);
-    const history = (await this.recall('runHistory')) || [];
-    history.push(runSummary);
-    await this.remember('runHistory', history);
+    try {
+      await this.remember('lastRun', runSummary);
+      const history = (await this.recall('runHistory')) || [];
+      history.push(runSummary);
+      await this.remember('runHistory', history);
+    } catch (memErr) {
+      this.log('memory_persist_error', { runId, error: memErr?.message || String(memErr) });
+    }
 
     this.log('run_complete', runSummary);
 

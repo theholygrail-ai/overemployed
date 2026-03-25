@@ -1,0 +1,8 @@
+﻿aws : 
+At C:\Users\erwin\AppData\Local\Temp\ps-script-e84ddcf2-2e3d-4720-a548-3806f588800d.ps1:88 char:1
++ aws ec2 get-console-output --region eu-north-1 --instance-id i-04d521 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+'charmap' codec can't encode character '\u2192' in position 16230: character maps to <undefined>

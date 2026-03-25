@@ -1,0 +1,1 @@
+{"commands":["set -e","cd /opt/overemployed","docker compose exec -T api python3 -m pip install --break-system-packages --no-cache-dir 'nova-act>=3.0' || true"]}

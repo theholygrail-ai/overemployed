@@ -12,8 +12,13 @@ async function ensureDir() {
 
 export async function loadMemory() {
   if (isS3DataEnabled()) {
-    const data = await getJsonKey(MEMORY_KEY);
-    return data && typeof data === 'object' ? data : {};
+    try {
+      const data = await getJsonKey(MEMORY_KEY);
+      return data && typeof data === 'object' ? data : {};
+    } catch (err) {
+      console.error('[memory] Failed to load memory from S3 (corrupt JSON or access error):', err?.message || err);
+      return {};
+    }
   }
   try {
     const raw = await fs.readFile(MEMORY_PATH, 'utf-8');

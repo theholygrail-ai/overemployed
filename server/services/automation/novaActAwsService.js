@@ -16,6 +16,7 @@ import {
   InvokeActStepCommand,
   ListActsCommand,
   GetWorkflowRunCommand,
+  GetWorkflowDefinitionCommand,
   ListModelsCommand,
   UpdateActCommand,
   ActStatus,
@@ -90,17 +91,59 @@ export function createNovaActClient() {
   return client;
 }
 
-async function resolveClientInfo(client) {
-  const forced = Number(process.env.NOVA_ACT_COMPATIBILITY_VERSION || '');
-  if (Number.isFinite(forced) && forced > 0) {
-    return {
-      compatibilityVersion: forced,
-      sdkVersion: process.env.NOVA_ACT_SDK_VERSION_TAG || 'overemployed-api/1.0.0',
-    };
+/**
+ * Pick a model id that exists for this account + client compatibility.
+ * A stale or wrong NOVA_ACT_MODEL_ID (e.g. deprecated alias) causes InvokeActStep to fail with
+ * ResourceNotFoundException / "NOT_FOUND" and an opaque resource id in the message.
+ */
+function pickNovaActModelId(listModelsOutput, requestedModelId) {
+  const supported = listModelsOutput.compatibilityInformation?.supportedModelIds || [];
+  const supportedSet = new Set(supported.filter(Boolean));
+  const aliases = listModelsOutput.modelAliases || [];
+  const req = String(requestedModelId || '').trim();
+
+  if (req && supportedSet.has(req)) return req;
+
+  const byAlias = aliases.find(a => a.aliasName === req);
+  const fromAlias = byAlias?.latestModelId || byAlias?.resolvedModelId;
+  if (fromAlias && supportedSet.has(fromAlias)) return fromAlias;
+
+  const novaLatest = aliases.find(a => a.aliasName === 'nova-act-latest');
+  const nlm = novaLatest?.latestModelId || novaLatest?.resolvedModelId;
+  if (nlm && supportedSet.has(nlm)) return nlm;
+
+  for (const id of supported) {
+    if (id) return id;
   }
-  const out = await client.send(new ListModelsCommand({ clientCompatibilityVersion: 1 }));
-  const cv = out.compatibilityInformation?.clientCompatibilityVersion ?? 1;
-  return { compatibilityVersion: cv, sdkVersion: 'overemployed-api/1.0.0' };
+
+  const active = (listModelsOutput.modelSummaries || []).find(
+    s => s?.modelId && (!supportedSet.size || supportedSet.has(s.modelId)) && s.modelLifecycle?.status === 'ACTIVE',
+  );
+  if (active?.modelId) return active.modelId;
+
+  return req || 'nova-act-latest';
+}
+
+async function resolveClientInfoAndModelId(client) {
+  const forced = Number(process.env.NOVA_ACT_COMPATIBILITY_VERSION || '');
+  const reqCv = Number.isFinite(forced) && forced > 0 ? forced : 1;
+  const out = await client.send(new ListModelsCommand({ clientCompatibilityVersion: reqCv }));
+
+  const compatibilityVersion = Number.isFinite(forced) && forced > 0
+    ? forced
+    : out.compatibilityInformation?.clientCompatibilityVersion ?? 1;
+
+  const requested = String(process.env.NOVA_ACT_MODEL_ID || 'nova-act-latest').trim();
+  const modelId = pickNovaActModelId(out, requested);
+
+  return {
+    clientInfo: {
+      compatibilityVersion,
+      sdkVersion: process.env.NOVA_ACT_SDK_VERSION_TAG || 'overemployed-api/1.0.0',
+    },
+    modelId,
+    requestedModelId: requested,
+  };
 }
 
 async function presignCvPdf(pdfPath, applicationId, onLog) {
@@ -166,9 +209,11 @@ function consoleRunUrl(workflowDefinitionName, workflowRunId) {
 }
 
 export async function probeNovaActAws() {
-  if (!isNovaActAwsApplyConfigured()) return false;
+  const name = String(process.env.NOVA_ACT_WORKFLOW_DEFINITION_NAME || '').trim();
+  if (!name) return false;
   try {
     const c = createNovaActClient();
+    await c.send(new GetWorkflowDefinitionCommand({ workflowDefinitionName: name }));
     await c.send(new ListModelsCommand({ clientCompatibilityVersion: 1 }));
     return true;
   } catch {
@@ -196,7 +241,6 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
 
   const applicationId = knowledgePack?.applicationId || appIdOpt || null;
   const workflowDefinitionName = String(process.env.NOVA_ACT_WORKFLOW_DEFINITION_NAME || '').trim();
-  const modelId = String(process.env.NOVA_ACT_MODEL_ID || 'nova-act-latest').trim();
 
   const onLog = line => trace({ onProgress, onTrace }, applicationId, line);
 
@@ -225,8 +269,13 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
   let stopScreencast = async () => {};
 
   try {
+    const { clientInfo, modelId, requestedModelId } = await resolveClientInfoAndModelId(client);
+    if (modelId !== requestedModelId) {
+      onLog(
+        `NOVA_ACT_MODEL_ID "${requestedModelId}" is not usable for this account; using "${modelId}" (from ListModels).`,
+      );
+    }
     onLog(`Nova Act AWS — workflow "${workflowDefinitionName}" model ${modelId}`);
-    const clientInfo = await resolveClientInfo(client);
     const runOut = await client.send(
       new CreateWorkflowRunCommand({
         workflowDefinitionName,

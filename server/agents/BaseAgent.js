@@ -50,6 +50,8 @@ export function buildMessage(event, data = {}) {
       const s = d.stored ?? 0;
       return `Run complete — ${j} found, ${c} CVs generated, ${s} saved`;
     }
+    case 'memory_persist_error':
+      return `Run history could not be saved to storage: ${d.error || ''}`;
     case 'pipeline_error':
       return `Pipeline error on ${d.jobTitle || 'job'}: ${d.error || ''}`;
     case 'auto_apply_error':

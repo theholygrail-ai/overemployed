@@ -29,7 +29,13 @@ export async function handler(event) {
   const broadcast = persistBroadcast;
 
   if (action === 'run') {
-    await setRunState({ running: true, lastRunResult: null, activityLog: [] });
+    const runToken = payload?.runToken ?? undefined;
+    await setRunState({
+      running: true,
+      lastRunResult: null,
+      activityLog: [],
+      ...(runToken ? { runToken } : {}),
+    });
     try {
       const orchestrator = new OrchestratorAgent({ broadcast });
       const criteria = await resolveRunCriteria(payload.criteria);
