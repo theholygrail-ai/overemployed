@@ -1,5 +1,5 @@
 /**
- * Catch-all /api/* → EC2 (see proxy-handler.mjs).
- * Explicit routes under api/ (e.g. jobs/[id]/apply) also delegate here for Vercel routing edge cases.
+ * Sole Vercel /api serverless entry (Hobby: max 12 functions per deployment).
+ * Proxies all /api/* → BACKEND_URL (lib/vercel-api-proxy.mjs).
  */
-export { default } from './proxy-handler.mjs';
+export { default } from '../lib/vercel-api-proxy.mjs';
