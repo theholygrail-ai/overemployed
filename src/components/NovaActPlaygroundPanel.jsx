@@ -7,6 +7,7 @@ import { splitNovaActTraceLines } from '../utils/novaActTrace.js';
 const FRAME_POLL_MS = 750;
 const TRACE_POLL_MS = 1100;
 const META_POLL_MS = 900;
+const RUN_META_POLL_MS = 2000;
 
 /**
  * Nova Act Playground–style monitor: live local Playwright viewport + task + reasoning / activity panes.
@@ -32,6 +33,9 @@ export default function NovaActPlaygroundPanel({
   const [frameBroken, setFrameBroken] = useState(false);
   /** MJPEG from Chromium CDP; falls back to polled single-frame if stream fails (proxy/auth). */
   const [streamFailed, setStreamFailed] = useState(false);
+  /** Browserbase runs in a remote session — same host MJPEG is still fed by server-side PNG ticks, but we surface the dashboard link. */
+  const [browserbaseSessionId, setBrowserbaseSessionId] = useState(null);
+  const [browserbaseConsoleUrl, setBrowserbaseConsoleUrl] = useState(null);
 
   const streamUrl = useMemo(
     () => (applicationId ? buildApiPath(`/jobs/${applicationId}/nova-act/live-stream`) : ''),
@@ -53,6 +57,25 @@ export default function NovaActPlaygroundPanel({
       const data = await res.json();
       setHasFrame(Boolean(data?.hasFrame));
       if (data?.pageUrl) setPageUrl(data.pageUrl);
+    } catch {
+      /* ignore */
+    }
+  }, [applicationId]);
+
+  const pollRunMeta = useCallback(async () => {
+    if (!applicationId) return;
+    try {
+      const res = await apiFetch(`/jobs/${applicationId}/nova-act/run-meta?t=${Date.now()}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setBrowserbaseSessionId(null);
+          setBrowserbaseConsoleUrl(null);
+        }
+        return;
+      }
+      const data = await res.json();
+      setBrowserbaseSessionId(data?.browserbaseSessionId || null);
+      setBrowserbaseConsoleUrl(data?.consoleUrl || null);
     } catch {
       /* ignore */
     }
@@ -91,13 +114,16 @@ export default function NovaActPlaygroundPanel({
     loadTask();
     const t2 = setInterval(pollTrace, TRACE_POLL_MS);
     const t3 = setInterval(pollMeta, META_POLL_MS);
+    const t4 = setInterval(pollRunMeta, RUN_META_POLL_MS);
     pollTrace();
     pollMeta();
+    pollRunMeta();
     return () => {
       clearInterval(t2);
       clearInterval(t3);
+      clearInterval(t4);
     };
-  }, [applicationId, loadTask, pollTrace, pollMeta]);
+  }, [applicationId, loadTask, pollTrace, pollMeta, pollRunMeta]);
 
   useEffect(() => {
     if (!applicationId || !streamFailed) return undefined;
@@ -135,15 +161,25 @@ export default function NovaActPlaygroundPanel({
 
   const urlBar = pageUrl || jobPostingUrl || '—';
   const showFallback = fallbackImageUrl && (!hasFrame || frameBroken);
+  const isBrowserbaseApply = Boolean(browserbaseSessionId);
+  const openBbUrl = browserbaseConsoleUrl || consoleUrl;
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
       <View style={styles.disclosure}>
         <Text style={styles.disclosureText}>
-          Live view uses Chromium CDP screencast (MJPEG) from the same Playwright session that runs Nova Act tool calls —
-          closest match to the hosted Playground without AWS pixel streaming. If the stream fails (e.g. Vercel buffering or
-          API_KEY on images), we fall back to polling JPEG/PNG. nova.amazon.com/act remains a separate product.
+          {isBrowserbaseApply
+            ? 'This apply run uses Browserbase (cloud browser) + Stagehand. The panel below streams frames from your API server (periodic screenshots of the remote session). For the full interactive session, open the Browserbase live link.'
+            : 'Live view uses Chromium CDP screencast (MJPEG) from the same Playwright session that runs Nova Act tool calls — closest match to the hosted Playground without AWS pixel streaming. If the stream fails (e.g. Vercel buffering or API_KEY on images), we fall back to polling JPEG/PNG. nova.amazon.com/act remains a separate product.'}
         </Text>
+        {isBrowserbaseApply && openBbUrl ? (
+          <TouchableOpacity
+            style={styles.bbLinkBtn}
+            onPress={() => window.open(openBbUrl, '_blank', 'noopener,noreferrer')}
+          >
+            <Text style={styles.bbLinkBtnText}>Open Browserbase live session</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(260px, 26%) 1fr', gap: 12, width: '100%' }}>
@@ -183,9 +219,14 @@ export default function NovaActPlaygroundPanel({
             <View style={styles.urlBarBox}>
               <Text style={styles.urlBarText} numberOfLines={1}>{urlBar}</Text>
             </View>
-            {consoleUrl ? (
+            {!isBrowserbaseApply && consoleUrl ? (
               <TouchableOpacity onPress={() => window.open(consoleUrl, '_blank', 'noopener,noreferrer')}>
                 <Text style={styles.consoleLink}>Open AWS Nova Act console</Text>
+              </TouchableOpacity>
+            ) : null}
+            {isBrowserbaseApply && openBbUrl ? (
+              <TouchableOpacity onPress={() => window.open(openBbUrl, '_blank', 'noopener,noreferrer')}>
+                <Text style={styles.consoleLink}>Open Browserbase session (same tab as automation)</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -203,7 +244,11 @@ export default function NovaActPlaygroundPanel({
             {streamFailed && !showFallback && (!hasFrame || frameBroken) && (
               <View style={styles.frameLoading}>
                 <ActivityIndicator color={theme.colors.primary} />
-                <Text style={styles.frameLoadingText}>Waiting for viewport (poll mode)…</Text>
+                <Text style={styles.frameLoadingText}>
+                  {isBrowserbaseApply
+                    ? 'Waiting for first screenshot from Browserbase session…'
+                    : 'Waiting for viewport (poll mode)…'}
+                </Text>
               </View>
             )}
             {streamFailed && liveFrameSrc && hasFrame && !frameBroken && (
@@ -224,11 +269,15 @@ export default function NovaActPlaygroundPanel({
             )}
             <View style={styles.liveBadge}>
               <Text style={styles.liveBadgeText}>
-                {!streamFailed && streamUrl
-                  ? '● CDP stream'
-                  : hasFrame && !frameBroken
-                    ? '● Poll frame'
-                    : '○ No live frame'}
+                {isBrowserbaseApply
+                  ? hasFrame && !frameBroken
+                    ? '● Browserbase (server mirror)'
+                    : '○ Waiting for screenshot…'
+                  : !streamFailed && streamUrl
+                    ? '● CDP stream'
+                    : hasFrame && !frameBroken
+                      ? '● Poll frame'
+                      : '○ No live frame'}
               </Text>
             </View>
           </div>
@@ -288,6 +337,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: theme.colors.textMuted,
     lineHeight: 16,
+  },
+  bbLinkBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.primary + '28',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  bbLinkBtnText: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+    fontSize: 12,
   },
   leftCol: {
     maxHeight: 520,

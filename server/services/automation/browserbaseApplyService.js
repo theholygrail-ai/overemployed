@@ -257,11 +257,21 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
         'You are a careful job-application assistant. Prefer visible form fields and buttons. Do not invent credentials.',
     });
 
-    const agentResult = await agent.execute({
-      instruction,
-      maxSteps,
-      page,
-    });
+    const liveTickMs = Math.max(1500, Number(process.env.BROWSERBASE_LIVE_FRAME_MS || 2500));
+    const liveInterval = setInterval(() => {
+      void maybePushLiveFrame(page, applicationId);
+    }, liveTickMs);
+
+    let agentResult;
+    try {
+      agentResult = await agent.execute({
+        instruction,
+        maxSteps,
+        page,
+      });
+    } finally {
+      clearInterval(liveInterval);
+    }
 
     await maybePushLiveFrame(page, applicationId);
 

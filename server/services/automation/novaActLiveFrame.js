@@ -1,6 +1,6 @@
 /**
  * Live viewport for the Playwright session (Nova Playground–style).
- * - Latest frame for GET /nova-act/live-frame (poll) or MJPEG /nova-act/live-stream.
+ * - Latest frame for GET /nova-act/live-frame (poll) or multipart /nova-act/live-stream (JPEG from Nova CDP or PNG from Browserbase screenshots).
  * AWS InvokeActStep does not stream video; CDP screencast mirrors the local Chromium tab.
  */
 const frames = new Map();
@@ -9,22 +9,24 @@ const mjpegClients = new Map();
 const TTL_MS = 45 * 60 * 1000;
 const MJPEG_BOUNDARY = 'frame';
 
-function writeMjpegPart(res, jpegBuffer) {
-  if (!jpegBuffer?.length || res.writableEnded) return;
+/** @param {import('http').ServerResponse} res */
+function writeMultipartFrame(res, buffer, mimeType = 'image/jpeg') {
+  if (!buffer?.length || res.writableEnded) return;
+  const ct = mimeType === 'image/png' ? 'image/png' : 'image/jpeg';
   try {
-    res.write(`--${MJPEG_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegBuffer.length}\r\n\r\n`);
-    res.write(jpegBuffer);
+    res.write(`--${MJPEG_BOUNDARY}\r\nContent-Type: ${ct}\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+    res.write(buffer);
     res.write('\r\n');
   } catch {
     /* client gone */
   }
 }
 
-function broadcastMjpeg(applicationId, jpegBuffer) {
+function broadcastMultipartFrame(applicationId, buffer, mimeType) {
   const set = mjpegClients.get(String(applicationId));
   if (!set?.size) return;
   for (const client of set) {
-    writeMjpegPart(client.res, jpegBuffer);
+    writeMultipartFrame(client.res, buffer, mimeType);
   }
 }
 
@@ -51,8 +53,8 @@ export function attachMjpegClient(applicationId, res) {
   });
 
   const row = frames.get(id);
-  if (row?.buffer?.length && row.mimeType === 'image/jpeg') {
-    writeMjpegPart(res, row.buffer);
+  if (row?.buffer?.length) {
+    writeMultipartFrame(res, row.buffer, row.mimeType || 'image/jpeg');
   }
 
   return () => {
@@ -97,9 +99,7 @@ export function setNovaActLiveFrame(applicationId, buffer, pageUrl, mimeType = '
     updatedAt: Date.now(),
     mimeType: mt,
   });
-  if (mt === 'image/jpeg') {
-    broadcastMjpeg(id, buf);
-  }
+  broadcastMultipartFrame(id, buf, mt);
 }
 
 export function getNovaActLiveFrame(applicationId) {
