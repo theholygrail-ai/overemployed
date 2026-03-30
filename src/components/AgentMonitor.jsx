@@ -121,7 +121,7 @@ export default function AgentMonitor() {
         if (key === lastPollKeyRef.current) return;
         lastPollKeyRef.current = key;
 
-        if (data.status === 'running') {
+        if (data.status === 'running' || data.status === 'applying') {
           setStages((prev) => ({
             ...prev,
             orchestrator: prev.orchestrator === 'idle' ? 'running' : prev.orchestrator,
@@ -129,7 +129,10 @@ export default function AgentMonitor() {
           setLog((prev) => {
             const line = {
               type: 'agent_log',
-              message: 'Pipeline / apply in progress (API poll)',
+              message:
+                data.status === 'applying'
+                  ? 'Apply in progress (API poll)'
+                  : 'Pipeline / apply in progress (API poll)',
               _logTs: Date.now(),
               _fromPoll: true,
             };

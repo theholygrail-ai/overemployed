@@ -15,7 +15,14 @@ describe('runState (local, no S3)', () => {
 
   beforeEach(async () => {
     const { setRunState } = await import('./runState.js');
-    await setRunState({ running: false, lastRunResult: null, activityLog: [], runToken: null });
+    await setRunState({
+      running: false,
+      lastRunResult: null,
+      activityLog: [],
+      runToken: null,
+      applyInProgress: false,
+      applyApplicationId: null,
+    });
   }, 60_000);
 
   it('persists activity log entries from appendRunActivity', async () => {

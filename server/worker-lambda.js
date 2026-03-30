@@ -69,18 +69,18 @@ export async function handler(event) {
   if (action === 'apply') {
     const { applicationId } = payload;
     if (!applicationId) {
-      await setRunState({ running: false });
+      await setRunState({ applyInProgress: false, applyApplicationId: null });
       return { ok: false, error: 'applicationId is required' };
     }
     try {
       const ApplicatorAgent = (await import('./agents/ApplicatorAgent.js')).default;
       const applicator = new ApplicatorAgent({ broadcast });
       const result = await applicator.applyToApplication(applicationId);
-      await setRunState({ running: false });
+      await setRunState({ applyInProgress: false, applyApplicationId: null });
       return { ok: true, result };
     } catch (err) {
       console.error('[worker-lambda] apply error:', err);
-      await setRunState({ running: false });
+      await setRunState({ applyInProgress: false, applyApplicationId: null });
       return { ok: false, error: err.message };
     }
   }

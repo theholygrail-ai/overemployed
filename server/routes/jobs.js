@@ -129,7 +129,9 @@ router.get('/api/jobs/:id/nova-act/trace', async (req, res, next) => {
 router.get('/api/jobs/:id/nova-act/run-meta', async (req, res, next) => {
   try {
     const meta = getNovaActRunMeta(req.params.id);
-    if (!meta) return res.status(404).json({ error: 'No active Nova Act run metadata' });
+    if (!meta) {
+      return res.json({ browserbaseSessionId: null, consoleUrl: null, active: false });
+    }
     res.json(meta);
   } catch (err) {
     next(err);
@@ -169,10 +171,10 @@ router.get('/api/jobs/:id/nova-act/live-meta', async (req, res) => {
 
 router.get('/api/jobs/:id/nova-act/task-preview', async (req, res) => {
   const text = getNovaActTaskPreview(req.params.id);
-  if (text == null) {
-    return res.status(404).json({ error: 'No task preview (apply may not have started yet)' });
-  }
-  res.json({ applicationId: req.params.id, text });
+  res.json({
+    applicationId: req.params.id,
+    text: text == null ? '' : text,
+  });
 });
 
 /** Appends a line to the in-memory trace (operator context). Does not change the Nova Act task in AWS. */

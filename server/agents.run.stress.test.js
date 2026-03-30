@@ -12,7 +12,14 @@ import { setRunState } from './services/runState.js';
 describe('POST /api/agents/run concurrency', () => {
   beforeEach(async () => {
     delete process.env.DATA_S3_BUCKET;
-    await setRunState({ running: false, lastRunResult: null, activityLog: [], runToken: null });
+    await setRunState({
+      running: false,
+      lastRunResult: null,
+      activityLog: [],
+      runToken: null,
+      applyInProgress: false,
+      applyApplicationId: null,
+    });
   });
 
   it('allows exactly one in-flight start when using worker Lambda', async () => {

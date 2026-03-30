@@ -210,7 +210,7 @@ export default function JobList() {
     const tick = async () => {
       try {
         const s = await apiGet('/agents/status');
-        const busy = s?.status === 'running';
+        const busy = Boolean(s?.pipelineRunning ?? (s?.status === 'running'));
         setRunInProgress(busy);
         if (runBusyRef.current && !busy) {
           fetchJobs();

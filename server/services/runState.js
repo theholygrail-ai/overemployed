@@ -3,6 +3,9 @@ import { getJsonKey, putJsonKey, isS3DataEnabled } from './s3Json.js';
 let localRunning = false;
 let localLastRunResult = null;
 let localRunToken = null;
+let localApplyInProgress = false;
+/** @type {string | null} */
+let localApplyApplicationId = null;
 /** @type {object[]} */
 let localActivityLog = [];
 
@@ -26,6 +29,8 @@ export async function getRunState() {
       lastRunResult: data?.lastRunResult ?? null,
       activityLog: Array.isArray(data?.activityLog) ? data.activityLog : [],
       runToken: data?.runToken ?? null,
+      applyInProgress: Boolean(data?.applyInProgress),
+      applyApplicationId: data?.applyApplicationId ?? null,
     };
   }
   return {
@@ -33,6 +38,8 @@ export async function getRunState() {
     lastRunResult: localLastRunResult,
     activityLog: [...localActivityLog],
     runToken: localRunToken,
+    applyInProgress: localApplyInProgress,
+    applyApplicationId: localApplyApplicationId,
   };
 }
 
@@ -45,6 +52,10 @@ export async function setRunState(partial) {
       activityLog:
         partial.activityLog !== undefined ? partial.activityLog : (Array.isArray(cur.activityLog) ? cur.activityLog : []),
       runToken: partial.runToken !== undefined ? partial.runToken : (cur.runToken ?? null),
+      applyInProgress:
+        partial.applyInProgress !== undefined ? partial.applyInProgress : Boolean(cur.applyInProgress),
+      applyApplicationId:
+        partial.applyApplicationId !== undefined ? partial.applyApplicationId : (cur.applyApplicationId ?? null),
       updatedAt: new Date().toISOString(),
     };
     await putJsonKey(KEY, next);
@@ -54,11 +65,15 @@ export async function setRunState(partial) {
   if (partial.lastRunResult !== undefined) localLastRunResult = partial.lastRunResult;
   if (partial.activityLog !== undefined) localActivityLog = [...partial.activityLog];
   if (partial.runToken !== undefined) localRunToken = partial.runToken;
+  if (partial.applyInProgress !== undefined) localApplyInProgress = partial.applyInProgress;
+  if (partial.applyApplicationId !== undefined) localApplyApplicationId = partial.applyApplicationId;
   return {
     running: localRunning,
     lastRunResult: localLastRunResult,
     activityLog: [...localActivityLog],
     runToken: localRunToken,
+    applyInProgress: localApplyInProgress,
+    applyApplicationId: localApplyApplicationId,
   };
 }
 

@@ -13,6 +13,8 @@ export function createAgentRoutes(broadcast) {
 
   /** Prevents parallel POST /run from passing the idle check before any run sets `running: true`. */
   let isAgentsRunStarting = false;
+  /** Prevents parallel POST /apply from passing the idle check before `applyInProgress` is persisted. */
+  let isApplyHandoff = false;
 
   router.post('/api/agents/run', requireApiKey, async (req, res, next) => {
     if (isAgentsRunStarting) {
@@ -134,8 +136,15 @@ export function createAgentRoutes(broadcast) {
 
   router.get('/api/agents/status', async (req, res) => {
     const s = await getRunState();
+    const pipelineRunning = Boolean(s.running);
+    const applyInProgress = Boolean(s.applyInProgress);
+    /** Coarse UI status: pipeline takes precedence; otherwise applying vs idle. */
+    const status = pipelineRunning ? 'running' : applyInProgress ? 'applying' : 'idle';
     res.json({
-      status: s.running ? 'running' : 'idle',
+      status,
+      pipelineRunning,
+      applyInProgress,
+      applyApplicationId: s.applyApplicationId ?? null,
       lastRunResult: s.lastRunResult,
       activityLog: s.activityLog ?? [],
       runToken: s.runToken ?? null,
@@ -143,48 +152,59 @@ export function createAgentRoutes(broadcast) {
   });
 
   router.post('/api/jobs/:id/apply', requireApiKey, async (req, res, next) => {
-    const state = await getRunState();
-    if (state.running) {
-      return res.status(409).json({ error: 'An agent run is already in progress' });
+    if (isApplyHandoff) {
+      return res.status(409).json({ error: 'An apply is already in progress' });
     }
-
-    try { req.setTimeout(600_000); } catch {}
-    try { res.setTimeout(600_000); } catch {}
-
-    if (shouldUseWorkerLambda()) {
-      const { id } = req.params;
-      try {
-        await updateApplicationStatus(id, 'applying');
-        await setRunState({ running: true });
-        broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
-        await invokeOrchestratorAsync({ action: 'apply', applicationId: id });
-        return res.json({
-          status: 'started',
-          applicationId: id,
-          message: 'Apply started on worker Lambda. Poll GET /api/agents/status or check job status.',
-        });
-      } catch (err) {
-        console.error('[agents/apply] Invoke error:', err.message);
-        await setRunState({ running: false });
-        try {
-          await updateApplicationStatus(id, 'ready');
-        } catch (e) {
-          console.error('[agents/apply] Could not revert status to ready:', e.message);
-        }
-        broadcast({ type: 'agent:status', status: 'idle', message: 'Apply error' });
-        return res.status(500).json({ error: err.message || 'Failed to start apply on worker' });
-      }
-    }
-
-    await setRunState({ running: true });
-    broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
-
+    isApplyHandoff = true;
     const { id } = req.params;
-    res.json({
-      status: 'started',
-      applicationId: id,
-      message: 'Apply started. Track progress via job status / interventions.',
-    });
+
+    try {
+      const state = await getRunState();
+      if (state.applyInProgress) {
+        if (state.applyApplicationId === id) {
+          return res.status(409).json({ error: 'An apply is already in progress for this application' });
+        }
+        return res.status(409).json({ error: 'An apply is already in progress' });
+      }
+
+      try { req.setTimeout(600_000); } catch {}
+      try { res.setTimeout(600_000); } catch {}
+
+      if (shouldUseWorkerLambda()) {
+        try {
+          await updateApplicationStatus(id, 'applying');
+          await setRunState({ applyInProgress: true, applyApplicationId: id });
+          broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
+          await invokeOrchestratorAsync({ action: 'apply', applicationId: id });
+          return res.json({
+            status: 'started',
+            applicationId: id,
+            message: 'Apply started on worker Lambda. Poll GET /api/agents/status or check job status.',
+          });
+        } catch (err) {
+          console.error('[agents/apply] Invoke error:', err.message);
+          await setRunState({ applyInProgress: false, applyApplicationId: null });
+          try {
+            await updateApplicationStatus(id, 'ready');
+          } catch (e) {
+            console.error('[agents/apply] Could not revert status to ready:', e.message);
+          }
+          broadcast({ type: 'agent:status', status: 'idle', message: 'Apply error' });
+          return res.status(500).json({ error: err.message || 'Failed to start apply on worker' });
+        }
+      }
+
+      await setRunState({ applyInProgress: true, applyApplicationId: id });
+      broadcast({ type: 'agent:status', status: 'applying', message: 'Applying to job…' });
+
+      res.json({
+        status: 'started',
+        applicationId: id,
+        message: 'Apply started. Track progress via job status / interventions.',
+      });
+    } finally {
+      isApplyHandoff = false;
+    }
 
     try {
       const ApplicatorAgent = (await import('../agents/ApplicatorAgent.js')).default;
@@ -208,7 +228,7 @@ export function createAgentRoutes(broadcast) {
         message: `Apply failed: ${err.message}`,
       });
     } finally {
-      await setRunState({ running: false });
+      await setRunState({ applyInProgress: false, applyApplicationId: null });
     }
   });
 
