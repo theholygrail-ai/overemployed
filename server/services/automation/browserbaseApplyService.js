@@ -286,6 +286,10 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
       apiKey: process.env.BROWSERBASE_API_KEY,
       projectId: process.env.BROWSERBASE_PROJECT_ID,
       model,
+      // Agent callbacks (used for HITL pause checks) require experimental mode
+      // and disableAPI=true in current Stagehand versions.
+      experimental: true,
+      disableAPI: true,
       keepAlive: true,
       actTimeoutMs,
       verbose: Number(process.env.STAGEHAND_VERBOSE || 0),

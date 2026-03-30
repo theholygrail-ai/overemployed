@@ -10,7 +10,6 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 
 const REGION = process.env.AWS_REGION || 'eu-north-1';
 const INSTANCE_ID = process.env.EC2_INSTANCE_ID || 'i-04d5210ffc3132ada';
@@ -56,7 +55,7 @@ try {
       '--region',
       REGION,
       '--cli-input-json',
-      pathToFileURL(reqFile).href,
+      `file://${reqFile.replace(/\\/g, '/')}`,
       '--output',
       'json',
     ],
