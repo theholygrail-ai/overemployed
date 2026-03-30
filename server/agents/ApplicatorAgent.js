@@ -100,7 +100,8 @@ export default class ApplicatorAgent extends BaseAgent {
           const meta = getNovaActRunMeta(applicationId);
           const blocker = await createBlocker(
             applicationId,
-            reason || 'Nova Act requested human action. Use AWS Nova Act console for the live trace, then tap Proceed.',
+            reason ||
+              'Automation requested human action. Open the live session link (Browserbase or Nova console) if shown, then tap Proceed.',
             null,
             job.url || null,
             { consoleUrl: meta?.consoleUrl || null },
@@ -114,7 +115,7 @@ export default class ApplicatorAgent extends BaseAgent {
       });
     } catch (err) {
       const msg = err?.message || String(err);
-      result = { success: false, status: 'failed', message: msg, engine: 'nova-act-aws' };
+      result = { success: false, status: 'failed', message: msg, engine: 'apply' };
       this.log('apply_exception', { applicationId, error: msg });
     }
 

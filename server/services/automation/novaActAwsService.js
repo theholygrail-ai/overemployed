@@ -21,6 +21,7 @@ import {
   UpdateActCommand,
   ActStatus,
   SortOrder,
+  ResourceNotFoundException,
 } from '@aws-sdk/client-nova-act';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -38,7 +39,49 @@ export const NOVA_ACT_REGION = 'us-east-1';
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.NOVA_ACT_TIMEOUT_MS || 25 * 60 * 1000);
 const MAX_INVOKE_STEPS = Number(process.env.NOVA_ACT_MAX_INVOKE_STEPS || 400);
+const NOT_FOUND_RETRIES = (() => {
+  const raw = process.env.NOVA_ACT_NOT_FOUND_RETRIES;
+  const n = raw != null && String(raw).trim() !== '' ? Number(raw) : 4;
+  if (!Number.isFinite(n) || n < 0) return 4;
+  return Math.min(8, n);
+})();
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
+
+function isNovaTransientNotFound(err) {
+  if (!err) return false;
+  if (err instanceof ResourceNotFoundException) return true;
+  const n = err.name || '';
+  const msg = String(err.message || '');
+  return n === 'ResourceNotFoundException' || /\bNOT_FOUND\b/i.test(msg) || /could not be found/i.test(msg);
+}
+
+function formatNovaActFailure(operation, err) {
+  const msg = err?.message || String(err);
+  const rt = err?.resourceType;
+  const rid = err?.resourceId;
+  if (rt || rid) {
+    return `Nova Act ${operation} failed (${rt || 'resource'} ${rid || ''}): ${msg}`;
+  }
+  return `Nova Act ${operation} failed: ${msg}`;
+}
+
+/** @param {import('@aws-sdk/client-nova-act').NovaActClient} client */
+async function sendNovaActWithRetry(client, operation, commandFactory) {
+  let lastErr;
+  for (let attempt = 0; attempt <= NOT_FOUND_RETRIES; attempt++) {
+    try {
+      return await client.send(commandFactory());
+    } catch (e) {
+      lastErr = e;
+      if (attempt < NOT_FOUND_RETRIES && isNovaTransientNotFound(e)) {
+        await delay(800 + attempt * 700);
+        continue;
+      }
+      throw new Error(formatNovaActFailure(operation, e), { cause: e });
+    }
+  }
+  throw new Error(formatNovaActFailure(operation, lastErr), { cause: lastErr });
+}
 
 const lastLiveFrameAt = new Map();
 async function maybePushLiveFrame(page, applicationId) {
@@ -76,7 +119,7 @@ export function isNovaActAwsApplyConfigured() {
 export function createNovaActClient() {
   const client = new NovaActClient({
     region: NOVA_ACT_REGION,
-    maxAttempts: 2,
+    maxAttempts: 4,
   });
   client.middlewareStack.add(
     next => async args => {
@@ -126,12 +169,32 @@ function pickNovaActModelId(listModelsOutput, requestedModelId) {
 
 async function resolveClientInfoAndModelId(client) {
   const forced = Number(process.env.NOVA_ACT_COMPATIBILITY_VERSION || '');
-  const reqCv = Number.isFinite(forced) && forced > 0 ? forced : 1;
-  const out = await client.send(new ListModelsCommand({ clientCompatibilityVersion: reqCv }));
+  const initialReqCv = Number.isFinite(forced) && forced > 0 ? forced : 1;
+
+  let out = await client.send(
+    new ListModelsCommand({ clientCompatibilityVersion: initialReqCv }),
+  );
+  let apiCv = out.compatibilityInformation?.clientCompatibilityVersion ?? initialReqCv;
+
+  if (Number.isFinite(forced) && forced > 0 && apiCv !== forced) {
+    console.warn(
+      `[nova-act] NOVA_ACT_COMPATIBILITY_VERSION=${forced} but ListModels reports ${apiCv}. ` +
+        'If apply fails with NOT_FOUND, unset NOVA_ACT_COMPATIBILITY_VERSION so the client version matches the API.',
+    );
+  }
+
+  /**
+   * Without NOVA_ACT_COMPATIBILITY_VERSION: first ListModels(1) may report a higher clientCompatibilityVersion.
+   * Model lists for v1 vs v2 differ; picking a model from the wrong list causes NOT_FOUND on InvokeActStep.
+   */
+  if (!(Number.isFinite(forced) && forced > 0) && apiCv !== initialReqCv) {
+    out = await client.send(new ListModelsCommand({ clientCompatibilityVersion: apiCv }));
+    apiCv = out.compatibilityInformation?.clientCompatibilityVersion ?? apiCv;
+  }
 
   const compatibilityVersion = Number.isFinite(forced) && forced > 0
     ? forced
-    : out.compatibilityInformation?.clientCompatibilityVersion ?? 1;
+    : apiCv;
 
   const requested = String(process.env.NOVA_ACT_MODEL_ID || 'nova-act-latest').trim();
   const modelId = pickNovaActModelId(out, requested);
@@ -276,19 +339,18 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
       );
     }
     onLog(`Nova Act AWS — workflow "${workflowDefinitionName}" model ${modelId}`);
-    const runOut = await client.send(
-      new CreateWorkflowRunCommand({
-        workflowDefinitionName,
-        modelId,
-        clientInfo,
-      }),
-    );
+    const runOut = await sendNovaActWithRetry(client, 'CreateWorkflowRun', () => new CreateWorkflowRunCommand({
+      workflowDefinitionName,
+      modelId,
+      clientInfo,
+    }));
     workflowRunId = runOut.workflowRunId;
     onLog(`Workflow run ${workflowRunId} (${runOut.status || 'RUNNING'})`);
 
-    const gr = await client.send(
-      new GetWorkflowRunCommand({ workflowDefinitionName, workflowRunId }),
-    );
+    const gr = await sendNovaActWithRetry(client, 'GetWorkflowRun', () => new GetWorkflowRunCommand({
+      workflowDefinitionName,
+      workflowRunId,
+    }));
     logGroupName = gr.logGroupName || null;
     if (logGroupName) onLog(`CloudWatch log group: ${logGroupName}`);
 
@@ -299,9 +361,10 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
       consoleUrl: consoleRunUrl(workflowDefinitionName, workflowRunId),
     });
 
-    const sessOut = await client.send(
-      new CreateSessionCommand({ workflowDefinitionName, workflowRunId }),
-    );
+    const sessOut = await sendNovaActWithRetry(client, 'CreateSession', () => new CreateSessionCommand({
+      workflowDefinitionName,
+      workflowRunId,
+    }));
     const sessionId = sessOut.sessionId;
     onLog(`Session ${sessionId}`);
 
@@ -324,14 +387,12 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
 
     const task = buildApplyTask(job, knowledgePack, profile, cvUrl);
     setNovaActTaskPreview(applicationId, task);
-    const actOut = await client.send(
-      new CreateActCommand({
-        workflowDefinitionName,
-        workflowRunId,
-        sessionId,
-        task,
-      }),
-    );
+    const actOut = await sendNovaActWithRetry(client, 'CreateAct', () => new CreateActCommand({
+      workflowDefinitionName,
+      workflowRunId,
+      sessionId,
+      task,
+    }));
     const actId = actOut.actId;
     onLog(`Act ${actId} (${actOut.status})`);
 
@@ -366,15 +427,13 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
         void tailNovaActLogGroup(logGroupName, started - 60_000, msg => onLog(`[cw] ${msg}`));
       }
 
-      const actList = await client.send(
-        new ListActsCommand({
-          workflowDefinitionName,
-          workflowRunId,
-          sessionId,
-          maxResults: 10,
-          sortOrder: SortOrder.DESC,
-        }),
-      );
+      const actList = await sendNovaActWithRetry(client, 'ListActs', () => new ListActsCommand({
+        workflowDefinitionName,
+        workflowRunId,
+        sessionId,
+        maxResults: 10,
+        sortOrder: SortOrder.DESC,
+      }));
       const summary = actList.actSummaries?.find(a => a.actId === actId);
       if (summary?.status === ActStatus.PENDING_HUMAN_ACTION) {
         await maybePushLiveFrame(page, applicationId);
@@ -386,15 +445,13 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
           sessionId,
           actId,
         });
-        await client.send(
-          new UpdateActCommand({
-            workflowDefinitionName,
-            workflowRunId,
-            sessionId,
-            actId,
-            status: ActStatus.RUNNING,
-          }),
-        );
+        await sendNovaActWithRetry(client, 'UpdateAct', () => new UpdateActCommand({
+          workflowDefinitionName,
+          workflowRunId,
+          sessionId,
+          actId,
+          status: ActStatus.RUNNING,
+        }));
         onLog('Act resumed to RUNNING after intervention.');
       }
       if (summary?.status === ActStatus.SUCCEEDED) {
@@ -420,16 +477,14 @@ export async function applyWithNovaActAws(job, cvAssets, profile, _artifacts, op
         };
       }
 
-      const stepOut = await client.send(
-        new InvokeActStepCommand({
-          workflowDefinitionName,
-          workflowRunId,
-          sessionId,
-          actId,
-          callResults,
-          previousStepId,
-        }),
-      );
+      const stepOut = await sendNovaActWithRetry(client, 'InvokeActStep', () => new InvokeActStepCommand({
+        workflowDefinitionName,
+        workflowRunId,
+        sessionId,
+        actId,
+        callResults,
+        previousStepId,
+      }));
       stepCount += 1;
       previousStepId = stepOut.stepId;
       const calls = stepOut.calls || [];

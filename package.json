@@ -28,9 +28,11 @@
     "@aws-sdk/credential-providers": "latest",
     "@aws-sdk/lib-dynamodb": "latest",
     "@aws-sdk/s3-request-presigner": "^3.1016.0",
+    "@browserbasehq/stagehand": "^3.2.0",
     "@codegenie/serverless-express": "^4.14.1",
     "axios": "latest",
     "cors": "latest",
+    "deepmerge": "^4.3.1",
     "docx": "^9.6.1",
     "dotenv": "^16.4.7",
     "express": "latest",
@@ -46,7 +48,8 @@
     "react-native-web": "latest",
     "react-router-dom": "latest",
     "uuid": "latest",
-    "ws": "latest"
+    "ws": "latest",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",

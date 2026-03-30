@@ -28,6 +28,15 @@ vi.mock('@aws-sdk/client-nova-act', () => {
   };
   const SortOrder = { ASC: 'Ascending', DESC: 'Descending' };
 
+  class ResourceNotFoundException extends Error {
+    constructor(opts = {}) {
+      super(opts.message || 'not found');
+      this.name = 'ResourceNotFoundException';
+      this.resourceId = opts.resourceId;
+      this.resourceType = opts.resourceType;
+    }
+  }
+
   class ListModelsCommand {}
   class CreateWorkflowRunCommand {}
   class GetWorkflowRunCommand {}
@@ -75,6 +84,7 @@ vi.mock('@aws-sdk/client-nova-act', () => {
 
   return {
     NovaActClient,
+    ResourceNotFoundException,
     ListModelsCommand,
     CreateWorkflowRunCommand,
     GetWorkflowRunCommand,
