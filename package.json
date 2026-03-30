@@ -13,6 +13,7 @@
     "package:extension": "node scripts/package-extension.js",
     "setup-aws": "node scripts/setup-aws.js",
     "sync:ec2-secrets": "node scripts/sync-ec2-secrets.mjs",
+    "deploy:ec2-api": "node scripts/deploy-ec2-api.mjs",
     "ensure:nova-workflow": "node scripts/ensure-nova-workflow-definition.mjs",
     "deploy:vercel": "npx --yes vercel --prod",
     "build:aws": "sam build --template-file sam/template.yaml",

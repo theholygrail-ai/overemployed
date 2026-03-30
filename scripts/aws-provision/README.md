@@ -43,18 +43,36 @@ Then apply on the instance (SSM or SSH):
 
 4. **Vercel env**: `VITE_API_URL=http://YOUR_IP_OR_DNS:4900` (or `https://…` after TLS), `VITE_WS_URL` if using WebSockets.
 
-## Re-deploy app code
+## Re-deploy app code (recommended: laptop → S3 → SSM)
 
-Upload a new bundle and unzip on the host, or `git pull` if you use git on the instance:
+The EC2 app dir often has **no `.git`**, so `git pull` on the instance does nothing. Use a **git archive** from your machine, upload to S3, then SSM extracts and rebuilds Docker.
+
+From repo root (AWS CLI + credentials for account `974560757141`):
 
 ```bash
-aws s3 cp s3://overemployed-code-974560757141/releases/deploy.zip /tmp/deploy.zip
-cd /opt/overemployed && unzip -o /tmp/deploy.zip
-docker compose up -d --build api
+npm run deploy:ec2-api
+```
+
+This runs `scripts/deploy-ec2-api.mjs`: archives `HEAD`, uploads to `s3://overemployed-code-974560757141/releases/oe-main-latest.tar.gz`, and starts **SSM RunShellScript** on instance `i-04d5210ffc3132ada` using `ssm-deploy-s3-tarball.json` (refresh Secrets Manager `.env`, `docker compose build/up api`, curl smoke tests).
+
+Poll the command:
+
+```bash
+aws ssm get-command-invocation --region eu-north-1 --command-id <CommandId> --instance-id i-04d5210ffc3132ada --query Status
+```
+
+### Manual S3 + SSM (same as script)
+
+```bash
+git archive --format=tar.gz -o /tmp/oe-main.tar.gz HEAD
+aws s3 cp /tmp/oe-main.tar.gz s3://overemployed-code-974560757141/releases/oe-main-latest.tar.gz --region eu-north-1
+# Then run Command in Console using scripts/aws-provision/ssm-deploy-s3-tarball.json parameters, or send-command with that JSON.
 ```
 
 ## Smoke test
 
 ```bash
 curl -s "http://PUBLIC_IP:4900/api/metrics"
+curl -s "http://PUBLIC_IP:4900/api/jobs/00000000-0000-0000-0000-000000000001/nova-act/trace"
+# Expect JSON: {"applicationId":"...","lines":[]} — not HTML "Cannot GET".
 ```

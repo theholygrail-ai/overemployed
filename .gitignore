@@ -26,6 +26,8 @@ deploy.zip
 lambda-deploy.zip
 lambda-full.zip
 response.json
+oe-deploy-*.tar.gz
+ssm-out.json
 
 # Playwright
 test-results/

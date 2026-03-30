@@ -1,0 +1,22 @@
+{
+  "commands": [
+    "set -e",
+    "mkdir -p /opt/overemployed/data",
+    "aws s3 cp s3://overemployed-code-974560757141/releases/oe-main-latest.tar.gz /tmp/oe-main.tar.gz --region eu-north-1",
+    "tar -xzf /tmp/oe-main.tar.gz -C /opt/overemployed",
+    "rm -f /tmp/oe-main.tar.gz",
+    "cd /opt/overemployed",
+    "aws secretsmanager get-secret-value --region eu-north-1 --secret-id overemployed/ec2-env --query SecretString --output text > /tmp/oe-secret.json",
+    "jq -r 'to_entries[] | \"\\(.key)=\\(.value)\"' /tmp/oe-secret.json > .env",
+    "rm -f /tmp/oe-secret.json",
+    "docker compose build api",
+    "docker compose up -d api",
+    "sleep 12",
+    "echo '--- EC2 localhost smoke ---'",
+    "curl -sS -o /dev/null -w 'metrics_http=%{http_code}\\n' http://127.0.0.1:4900/api/metrics",
+    "curl -sS -w '\\nnova_trace_http=%{http_code}\\n' 'http://127.0.0.1:4900/api/jobs/00000000-0000-0000-0000-000000000001/nova-act/trace' | head -c 500",
+    "echo ''",
+    "curl -sS -o /dev/null -w 'live_meta_http=%{http_code}\\n' 'http://127.0.0.1:4900/api/jobs/00000000-0000-0000-0000-000000000001/nova-act/live-meta'",
+    "docker compose ps"
+  ]
+}
