@@ -3,11 +3,14 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
-    "api/[...path].mjs": {
+    "api/_proxy.mjs": {
       "maxDuration": 300
     }
   },
   "rewrites": [
+    { "source": "^/api$", "destination": "/api/_proxy?__p=" },
+    { "source": "^/api/$", "destination": "/api/_proxy?__p=" },
+    { "source": "^/api/(?!_proxy)(.*)$", "destination": "/api/_proxy?__p=$1" },
     { "source": "/", "destination": "/index.html" },
     {
       "source": "/:path((?!api/|assets/|extension/).*)",
