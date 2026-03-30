@@ -6,10 +6,16 @@
     "api/[...path].mjs": {
       "maxDuration": 300
     },
+    "api/agents/[...segments].mjs": {
+      "maxDuration": 300
+    },
     "api/hitl/[...segments].mjs": {
       "maxDuration": 300
     },
     "api/jobs/[id]/apply.mjs": {
+      "maxDuration": 300
+    },
+    "api/jobs/[id]/nova-act/[...segments].mjs": {
       "maxDuration": 300
     },
     "api/jobs/[id]/live-frame.mjs": {
