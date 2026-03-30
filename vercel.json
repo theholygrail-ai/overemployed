@@ -3,14 +3,14 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
-    "api/_proxy.mjs": {
+    "api/shim.mjs": {
       "maxDuration": 300
     }
   },
   "rewrites": [
-    { "source": "^/api$", "destination": "/api/_proxy?__p=" },
-    { "source": "^/api/$", "destination": "/api/_proxy?__p=" },
-    { "source": "^/api/(?!_proxy)(.*)$", "destination": "/api/_proxy?__p=$1" },
+    { "source": "/api", "destination": "/api/shim?__p=" },
+    { "source": "/api/", "destination": "/api/shim?__p=" },
+    { "source": "/api/:path*", "destination": "/api/shim?__p=:path*" },
     { "source": "/", "destination": "/index.html" },
     {
       "source": "/:path((?!api/|assets/|extension/).*)",
