@@ -169,7 +169,7 @@ export default function NovaActPlaygroundPanel({
       <View style={styles.disclosure}>
         <Text style={styles.disclosureText}>
           {isBrowserbaseApply
-            ? 'This apply run uses Browserbase (cloud browser) + Stagehand. The panel below streams frames from your API server (periodic screenshots of the remote session). For the full interactive session, open the Browserbase live link.'
+            ? 'This apply run uses Browserbase (cloud browser) + Stagehand. The panel below mirrors the session with periodic screenshots from your API. Open the Browserbase live link for the real browser view. If you must intervene (e.g. login or CAPTCHA), use that same link — you share the remote session with the agent, so avoid fighting it while it is clicking.'
             : 'Live view uses Chromium CDP screencast (MJPEG) from the same Playwright session that runs Nova Act tool calls — closest match to the hosted Playground without AWS pixel streaming. If the stream fails (e.g. Vercel buffering or API_KEY on images), we fall back to polling JPEG/PNG. nova.amazon.com/act remains a separate product.'}
         </Text>
         {isBrowserbaseApply && openBbUrl ? (

@@ -2,7 +2,8 @@
  * Job apply automation via Browserbase (hosted browser) + Stagehand (AI DOM agent).
  * Replaces fragile Nova Act IAM loops for environments where Browserbase + an LLM key are available.
  *
- * Env: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, and a provider key for STAGEHAND_MODEL (default openai/gpt-4o → OPENAI_API_KEY).
+ * Env: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, and a provider key for STAGEHAND_MODEL
+ * (e.g. openai/gpt-4o → OPENAI_API_KEY, groq/llama-3.3-70b-versatile → GROQ_API_KEY, or shorthand groq-llama-… → GROQ_API_KEY).
  * @see https://docs.browserbase.com/introduction/playwright
  * @see https://docs.stagehand.dev/
  */
@@ -21,6 +22,67 @@ import { setNovaActLiveFrame } from './novaActLiveFrame.js';
 const DEFAULT_MAX_STEPS = Number(process.env.STAGEHAND_APPLY_MAX_STEPS || 35);
 const NAV_TIMEOUT_MS = Number(process.env.STAGEHAND_NAV_TIMEOUT_MS || 120_000);
 
+/**
+ * Heuristic "human intervention likely needed" detection for Browserbase runs.
+ *
+ * This is intentionally conservative in false positives (avoid pausing for normal pages),
+ * but aggressive enough to catch common anti-bot + auth walls.
+ */
+export async function shouldPauseForHuman(page, lastUrl = '') {
+  if (!page) return false;
+
+  const url =
+    typeof lastUrl === 'string' && lastUrl.trim()
+      ? lastUrl.trim()
+      : (() => {
+        try {
+          return page.url?.() || '';
+        } catch {
+          return '';
+        }
+      })();
+
+  const urlRx = String(process.env.BROWSERBASE_HITL_URL_REGEX || '').trim();
+  const urlPatterns = urlRx
+    ? [new RegExp(urlRx, 'i')]
+    : [
+      /captcha/i,
+      /verify\s+you\s+are\s+human/i,
+      /are\s+you\s+human/i,
+      /robot\s+check/i,
+      /i['’]?m\s+not\s+a\s+robot/i,
+      /sign\s*in|log\s*in|authentication|account/i,
+    ];
+  if (url && urlPatterns.some(rx => rx.test(url))) return true;
+
+  const minTextLen = Number(process.env.BROWSERBASE_HITL_MIN_TEXT_LEN || 12);
+  const textRxRaw = String(process.env.BROWSERBASE_HITL_TEXT_REGEX || '').trim();
+  const textPatterns = textRxRaw
+    ? [new RegExp(textRxRaw, 'i')]
+    : [
+      /captcha/i,
+      /verify\s+you\s+are\s+human/i,
+      /are\s+you\s+human/i,
+      /robot\s+check/i,
+      /enter\s+the\s+characters|type\s+the\s+text|type\s+the\s+characters/i,
+      /sign\s*in|log\s*in|authentication|verify\s+your\s+identity|account/i,
+    ];
+
+  // Throttling is handled by the caller; here we only do best-effort sampling.
+  try {
+    const text = await page.evaluate(() => {
+      // eslint-disable-next-line no-undef
+      const bodyText = document?.body?.innerText || '';
+      return bodyText.slice(0, 20000);
+    });
+    const t = String(text || '').trim();
+    if (t.length < minTextLen) return false;
+    return textPatterns.some(rx => rx.test(t));
+  } catch {
+    return false;
+  }
+}
+
 function trace(options, applicationId, line) {
   if (!line) return;
   appendNovaActTrace(applicationId, line);
@@ -31,20 +93,28 @@ function trace(options, applicationId, line) {
 function providerApiKeyEnvForModel(modelStr) {
   const m = String(modelStr || '').trim();
   const slash = m.indexOf('/');
-  const provider = slash >= 0 ? m.slice(0, slash).toLowerCase() : 'openai';
-  const map = {
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-    google: 'GOOGLE_API_KEY',
-    groq: 'GROQ_API_KEY',
-    xai: 'XAI_API_KEY',
-    mistral: 'MISTRAL_API_KEY',
-    cerebras: 'CEREBRAS_API_KEY',
-    togetherai: 'TOGETHER_API_KEY',
-    perplexity: 'PERPLEXITY_API_KEY',
-    deepseek: 'DEEPSEEK_API_KEY',
-  };
-  return map[provider] || 'OPENAI_API_KEY';
+  if (slash >= 0) {
+    const provider = m.slice(0, slash).toLowerCase();
+    const map = {
+      openai: 'OPENAI_API_KEY',
+      anthropic: 'ANTHROPIC_API_KEY',
+      google: 'GOOGLE_API_KEY',
+      groq: 'GROQ_API_KEY',
+      xai: 'XAI_API_KEY',
+      mistral: 'MISTRAL_API_KEY',
+      cerebras: 'CEREBRAS_API_KEY',
+      togetherai: 'TOGETHER_API_KEY',
+      perplexity: 'PERPLEXITY_API_KEY',
+      deepseek: 'DEEPSEEK_API_KEY',
+    };
+    return map[provider] || 'OPENAI_API_KEY';
+  }
+  // Stagehand shorthand ids (no "provider/model" slash) — align with @browserbasehq/stagehand LLMProvider maps
+  if (m.startsWith('groq-') || m.startsWith('moonshotai/')) return 'GROQ_API_KEY';
+  if (m.startsWith('cerebras-')) return 'CEREBRAS_API_KEY';
+  if (m.startsWith('gemini-')) return 'GOOGLE_API_KEY';
+  if (m.startsWith('gpt-') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'OPENAI_API_KEY';
+  return 'OPENAI_API_KEY';
 }
 
 export function isBrowserbaseApplyConfigured() {
@@ -163,6 +233,7 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
     liAtCookie,
     onProgress,
     onTrace,
+    onPendingHuman,
     applicationId: appIdOpt,
   } = options;
 
@@ -190,6 +261,12 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
 
   const model = String(process.env.STAGEHAND_MODEL || 'openai/gpt-4o').trim();
   const maxSteps = Number.isFinite(DEFAULT_MAX_STEPS) && DEFAULT_MAX_STEPS > 0 ? DEFAULT_MAX_STEPS : 35;
+  const minHumanCheckMs = Number(process.env.BROWSERBASE_HITL_MIN_CHECK_MS || 5000);
+  const humanGateCooldownMs = Number(process.env.BROWSERBASE_HITL_COOLDOWN_MS || 60_000);
+  const actTimeoutMs = Number(process.env.BROWSERBASE_HITL_ACT_TIMEOUT_MS || 12 * 60 * 1000);
+  const maxHumanPauseCycles = Number.isFinite(process.env.BROWSERBASE_HITL_MAX_PAUSES || 3)
+    ? Number(process.env.BROWSERBASE_HITL_MAX_PAUSES)
+    : 3;
 
   let stagehand;
   try {
@@ -209,6 +286,8 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
       apiKey: process.env.BROWSERBASE_API_KEY,
       projectId: process.env.BROWSERBASE_PROJECT_ID,
       model,
+      keepAlive: true,
+      actTimeoutMs,
       verbose: Number(process.env.STAGEHAND_VERBOSE || 0),
       logger: logLine => {
         const msg = `[stagehand] ${logLine.category}: ${logLine.message}`;
@@ -262,12 +341,52 @@ export async function applyWithBrowserbaseStagehand(job, cvAssets, profile, _art
       void maybePushLiveFrame(page, applicationId);
     }, liveTickMs);
 
+    let pendingHumanActive = false;
+    let humanCheckAt = 0;
+    let humanPauseCount = 0;
+    let humanCooldownUntil = 0;
+
     let agentResult;
     try {
       agentResult = await agent.execute({
         instruction,
         maxSteps,
         page,
+        callbacks: {
+          onStepFinish: async () => {
+            await maybePushLiveFrame(page, applicationId);
+            if (!onPendingHuman) return;
+            if (pendingHumanActive) return;
+            if (humanPauseCount >= maxHumanPauseCycles) return;
+            if (Date.now() < humanCooldownUntil) return;
+
+            // Throttle expensive DOM reads; also prevents repeated pauses on the same wall.
+            if (Date.now() - humanCheckAt < minHumanCheckMs) return;
+            humanCheckAt = Date.now();
+
+            const lastUrl = (() => {
+              try {
+                return page?.url?.() || '';
+              } catch {
+                return '';
+              }
+            })();
+
+            const shouldPause = await shouldPauseForHuman(page, lastUrl);
+            if (!shouldPause) return;
+
+            pendingHumanActive = true;
+            humanPauseCount += 1;
+            humanCooldownUntil = Date.now() + humanGateCooldownMs;
+
+            try {
+              const reason = `Browserbase / Stagehand detected a likely human intervention wall (url=${String(lastUrl).slice(0, 120)}).`;
+              await onPendingHuman({ reason });
+            } finally {
+              pendingHumanActive = false;
+            }
+          },
+        },
       });
     } finally {
       clearInterval(liveInterval);

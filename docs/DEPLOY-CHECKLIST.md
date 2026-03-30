@@ -103,6 +103,24 @@ Follow [DEPLOY-AWS.md](./DEPLOY-AWS.md):
 
 Put **HTTPS** in front of the API (Caddy/nginx/Let’s Encrypt or Cloudflare) so the browser allows `fetch` and **wss** from your Vercel domain.
 
+### Browserbase + Stagehand apply (EC2)
+
+Apply uses **Browserbase + Stagehand** when `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, and the API key for `STAGEHAND_MODEL` are set on the **API host** (not Vercel). Typical Groq setup: `STAGEHAND_MODEL=groq/llama-3.3-70b-versatile` plus `GROQ_API_KEY`.
+
+1. **Secrets Manager (recommended):** On a machine with AWS CLI + your filled **local** `.env` (gitignored), run:
+
+   `node scripts/sync-ec2-secrets.mjs`
+
+   That merges `BROWSERBASE_*`, `STAGEHAND_MODEL`, `GROQ_API_KEY`, etc. into `overemployed/ec2-env`. Then **restart or redeploy** the EC2 API so it reloads env (Docker Compose recreate, systemd, or your SSM/user-data flow).
+
+2. **Smoke (no secrets in response):**
+
+   `curl -s "https://YOUR_API_HOST/api/automation/status?verify=1"`
+
+   Expect `applyEngine: "browserbase-stagehand"` and `browserbase.apiVerify.ok: true` when verify succeeds.
+
+3. **Vercel:** Keep `BACKEND_URL` (or equivalent) so `/api/*` proxies to this EC2 API; live viewport and HITL need the same origin as your SPA or a correctly configured API URL.
+
 ---
 
 ## 4. Smoke tests

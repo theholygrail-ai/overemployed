@@ -17,7 +17,8 @@
     "deploy:vercel": "npx --yes vercel --prod",
     "build:aws": "sam build --template-file sam/template.yaml",
     "deploy:aws": "sam deploy --template-file sam/template.yaml --no-confirm-changeset --capabilities CAPABILITY_IAM --resolve-s3",
-    "deploy:lambda": "powershell -ExecutionPolicy Bypass -File scripts/deploy-lambda-aws-cli.ps1"
+    "deploy:lambda": "powershell -ExecutionPolicy Bypass -File scripts/deploy-lambda-aws-cli.ps1",
+    "probe:browserbase": "node scripts/probe-browserbase.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "^3.1016.0",

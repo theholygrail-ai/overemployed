@@ -10,6 +10,7 @@ import sessionCookiesRoutes from './routes/sessionCookies.js';
 import sessionCaptureRoutes from './routes/sessionCapture.js';
 import applyCredentialsRoutes from './routes/applyCredentials.js';
 import jobCriteriaRoutes from './routes/jobCriteria.js';
+import automationRoutes from './routes/automation.js';
 import errorHandler from './middleware/errorHandler.js';
 import { mutationRateLimitMiddleware } from './middleware/mutationRateLimit.js';
 
@@ -40,6 +41,7 @@ export function createApp({ broadcast }) {
   app.use(sessionCaptureRoutes);
   app.use(applyCredentialsRoutes);
   app.use(jobCriteriaRoutes);
+  app.use(automationRoutes);
 
   app.use(errorHandler);
 

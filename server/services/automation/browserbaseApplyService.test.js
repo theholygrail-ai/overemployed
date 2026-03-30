@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   isBrowserbaseApplyConfigured,
   probeBrowserbaseApply,
+  shouldPauseForHuman,
 } from './browserbaseApplyService.js';
 
 describe('browserbaseApplyService config', () => {
@@ -11,6 +12,7 @@ describe('browserbaseApplyService config', () => {
     openai: process.env.OPENAI_API_KEY,
     model: process.env.STAGEHAND_MODEL,
     anthropic: process.env.ANTHROPIC_API_KEY,
+    groq: process.env.GROQ_API_KEY,
   };
 
   beforeEach(() => {
@@ -19,6 +21,7 @@ describe('browserbaseApplyService config', () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.STAGEHAND_MODEL;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GROQ_API_KEY;
   });
 
   afterEach(() => {
@@ -32,6 +35,8 @@ describe('browserbaseApplyService config', () => {
     else process.env.STAGEHAND_MODEL = prev.model;
     if (prev.anthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = prev.anthropic;
+    if (prev.groq === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = prev.groq;
   });
 
   it('isBrowserbaseApplyConfigured is false without keys', () => {
@@ -60,5 +65,48 @@ describe('browserbaseApplyService config', () => {
     expect(probeBrowserbaseApply()).toBe(false);
     process.env.ANTHROPIC_API_KEY = 'anthropic-test';
     expect(probeBrowserbaseApply()).toBe(true);
+  });
+
+  it('probeBrowserbaseApply uses GROQ_API_KEY for groq/ and groq- Stagehand models', () => {
+    process.env.BROWSERBASE_API_KEY = 'bb-key';
+    process.env.BROWSERBASE_PROJECT_ID = 'proj-1';
+    process.env.STAGEHAND_MODEL = 'groq/llama-3.3-70b-versatile';
+    expect(probeBrowserbaseApply()).toBe(false);
+    process.env.GROQ_API_KEY = 'gsk-test';
+    expect(probeBrowserbaseApply()).toBe(true);
+    delete process.env.GROQ_API_KEY;
+    process.env.STAGEHAND_MODEL = 'groq-llama-3.3-70b-versatile';
+    expect(probeBrowserbaseApply()).toBe(false);
+    process.env.GROQ_API_KEY = 'gsk-test';
+    expect(probeBrowserbaseApply()).toBe(true);
+  });
+
+  it('shouldPauseForHuman returns true on URL match without evaluating DOM text', async () => {
+    const page = {
+      url: () => 'https://example.com/captcha',
+      evaluate: vi.fn(),
+    };
+
+    await expect(shouldPauseForHuman(page)).resolves.toBe(true);
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('shouldPauseForHuman returns true on text match from page.evaluate', async () => {
+    const page = {
+      url: () => 'https://example.com/job',
+      evaluate: vi.fn().mockResolvedValue('Please verify you are human to continue.'),
+    };
+
+    await expect(shouldPauseForHuman(page)).resolves.toBe(true);
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('shouldPauseForHuman returns false when no patterns match', async () => {
+    const page = {
+      url: () => 'https://example.com/job',
+      evaluate: vi.fn().mockResolvedValue('All good. No challenge or verification prompt found.'),
+    };
+
+    await expect(shouldPauseForHuman(page)).resolves.toBe(false);
   });
 });

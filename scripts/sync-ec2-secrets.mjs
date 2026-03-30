@@ -79,6 +79,9 @@ function main() {
     DYNAMODB_TABLE_NAME: local.DYNAMODB_TABLE_NAME || cur.DYNAMODB_TABLE_NAME || 'TheHolyGrail-Applications',
     AWS_REGION: local.AWS_REGION || region,
     PORT: local.PORT || cur.PORT || '4900',
+    BROWSERBASE_API_KEY: local.BROWSERBASE_API_KEY || cur.BROWSERBASE_API_KEY || '',
+    BROWSERBASE_PROJECT_ID: local.BROWSERBASE_PROJECT_ID || cur.BROWSERBASE_PROJECT_ID || '',
+    STAGEHAND_MODEL: local.STAGEHAND_MODEL || cur.STAGEHAND_MODEL || '',
   };
 
   const tmp = path.join(root, '.ec2-secret.tmp.json');
