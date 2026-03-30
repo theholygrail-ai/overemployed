@@ -9,6 +9,11 @@ const TRACE_POLL_MS = 1100;
 const META_POLL_MS = 900;
 const RUN_META_POLL_MS = 2000;
 
+/** Express "Cannot GET …" is HTML 404; current API always returns JSON for these routes. */
+function isStaleNovaApiHtml404(res) {
+  return res.status === 404 && (res.headers.get('content-type') || '').includes('text/html');
+}
+
 /**
  * Nova Act Playground–style monitor: live local Playwright viewport + task + reasoning / activity panes.
  * The AWS control plane does not stream video; the image is our automation browser on the API server.
@@ -36,6 +41,8 @@ export default function NovaActPlaygroundPanel({
   /** Browserbase runs in a remote session — same host MJPEG is still fed by server-side PNG ticks, but we surface the dashboard link. */
   const [browserbaseSessionId, setBrowserbaseSessionId] = useState(null);
   const [browserbaseConsoleUrl, setBrowserbaseConsoleUrl] = useState(null);
+  /** Backend behind Vercel BACKEND_URL is older than routes under /api/jobs/:id/nova-act/*. */
+  const [staleNovaApi, setStaleNovaApi] = useState(false);
 
   const streamUrl = useMemo(
     () => (applicationId ? buildApiPath(`/jobs/${applicationId}/nova-act/live-stream`) : ''),
@@ -53,7 +60,11 @@ export default function NovaActPlaygroundPanel({
     if (!applicationId) return;
     try {
       const res = await apiFetch(`/jobs/${applicationId}/nova-act/live-meta?t=${Date.now()}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (isStaleNovaApiHtml404(res)) setStaleNovaApi(true);
+        return;
+      }
+      setStaleNovaApi(false);
       const data = await res.json();
       setHasFrame(Boolean(data?.hasFrame));
       if (data?.pageUrl) setPageUrl(data.pageUrl);
@@ -85,7 +96,11 @@ export default function NovaActPlaygroundPanel({
     if (!applicationId) return;
     try {
       const res = await apiFetch(`/jobs/${applicationId}/nova-act/trace?t=${Date.now()}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (isStaleNovaApiHtml404(res)) setStaleNovaApi(true);
+        return;
+      }
+      setStaleNovaApi(false);
       const data = await res.json();
       const lines = Array.isArray(data?.lines) ? data.lines : [];
       setTraceLines(lines);
@@ -109,6 +124,7 @@ export default function NovaActPlaygroundPanel({
 
   useEffect(() => {
     if (!applicationId) return undefined;
+    setStaleNovaApi(false);
     setFrameBroken(false);
     setStreamFailed(false);
     loadTask();
@@ -166,6 +182,16 @@ export default function NovaActPlaygroundPanel({
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
+      {staleNovaApi ? (
+        <View style={styles.staleApiBanner}>
+          <Text style={styles.staleApiTitle}>API server is missing automation routes</Text>
+          <Text style={styles.staleApiBody}>
+            Vercel is proxying correctly, but the host set as BACKEND_URL (your EC2 API) responded with “Cannot GET” for
+            /api/jobs/…/nova-act/*. Pull the latest code on that host, restart the Node process (or redeploy the API
+            container), then reload this page.
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.disclosure}>
         <Text style={styles.disclosureText}>
           {isBrowserbaseApply
@@ -315,6 +341,25 @@ export default function NovaActPlaygroundPanel({
 }
 
 const styles = StyleSheet.create({
+  staleApiBanner: {
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#a85',
+    backgroundColor: 'rgba(160, 60, 50, 0.15)',
+  },
+  staleApiTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#e8a090',
+    marginBottom: 6,
+  },
+  staleApiBody: {
+    fontSize: 12,
+    color: theme.colors.textMuted,
+    lineHeight: 17,
+  },
   wrap: {
     width: '100%',
     padding: 12,
