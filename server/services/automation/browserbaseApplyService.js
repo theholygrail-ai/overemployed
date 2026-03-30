@@ -156,7 +156,8 @@ function buildApplyInstruction(job, knowledgePack, profile, cvPresignUrl) {
   const cvNote = cvPresignUrl
     ? `Download the applicant CV (PDF) from this temporary URL and use it for file uploads: ${cvPresignUrl}`
     : 'No presigned CV URL — answer from the tailored CV text below.';
-  const tailored = String(knowledgePack?.tailoredCV || '').slice(0, 12000);
+  // Keep context compact for non-OpenAI providers to reduce tool-call parse failures.
+  const tailored = String(knowledgePack?.tailoredCV || '').slice(0, 3500);
 
   return [
     `You are applying for the job "${role}" at "${company}".`,
