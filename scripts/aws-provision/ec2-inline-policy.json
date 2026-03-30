@@ -32,6 +32,15 @@
       "Effect": "Allow",
       "Action": ["secretsmanager:GetSecretValue"],
       "Resource": "arn:aws:secretsmanager:eu-north-1:974560757141:secret:overemployed/ec2-env*"
+    },
+    {
+      "Sid": "AppDataBucketRW",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::overemployed-data-974560757141",
+        "arn:aws:s3:::overemployed-data-974560757141/*"
+      ]
     }
   ]
 }

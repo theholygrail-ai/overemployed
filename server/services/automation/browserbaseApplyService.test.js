@@ -13,6 +13,7 @@ describe('browserbaseApplyService config', () => {
     model: process.env.STAGEHAND_MODEL,
     anthropic: process.env.ANTHROPIC_API_KEY,
     groq: process.env.GROQ_API_KEY,
+    stagehandMode: process.env.BROWSERBASE_USE_STAGEHAND_AGENT,
   };
 
   beforeEach(() => {
@@ -22,6 +23,7 @@ describe('browserbaseApplyService config', () => {
     delete process.env.STAGEHAND_MODEL;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GROQ_API_KEY;
+    delete process.env.BROWSERBASE_USE_STAGEHAND_AGENT;
   });
 
   afterEach(() => {
@@ -37,6 +39,8 @@ describe('browserbaseApplyService config', () => {
     else process.env.ANTHROPIC_API_KEY = prev.anthropic;
     if (prev.groq === undefined) delete process.env.GROQ_API_KEY;
     else process.env.GROQ_API_KEY = prev.groq;
+    if (prev.stagehandMode === undefined) delete process.env.BROWSERBASE_USE_STAGEHAND_AGENT;
+    else process.env.BROWSERBASE_USE_STAGEHAND_AGENT = prev.stagehandMode;
   });
 
   it('isBrowserbaseApplyConfigured is false without keys', () => {
@@ -50,26 +54,26 @@ describe('browserbaseApplyService config', () => {
     expect(isBrowserbaseApplyConfigured()).toBe(true);
   });
 
-  it('probeBrowserbaseApply requires provider key for default openai model', () => {
+  it('probeBrowserbaseApply is ready without LLM key in Playwright mode', () => {
     process.env.BROWSERBASE_API_KEY = 'bb-key';
     process.env.BROWSERBASE_PROJECT_ID = 'proj-1';
-    expect(probeBrowserbaseApply()).toBe(false);
-    process.env.OPENAI_API_KEY = 'sk-test';
     expect(probeBrowserbaseApply()).toBe(true);
   });
 
-  it('probeBrowserbaseApply respects STAGEHAND_MODEL provider', () => {
+  it('probeBrowserbaseApply requires provider key when Stagehand mode is enabled', () => {
     process.env.BROWSERBASE_API_KEY = 'bb-key';
     process.env.BROWSERBASE_PROJECT_ID = 'proj-1';
+    process.env.BROWSERBASE_USE_STAGEHAND_AGENT = 'true';
     process.env.STAGEHAND_MODEL = 'anthropic/claude-sonnet-4-6';
     expect(probeBrowserbaseApply()).toBe(false);
     process.env.ANTHROPIC_API_KEY = 'anthropic-test';
     expect(probeBrowserbaseApply()).toBe(true);
   });
 
-  it('probeBrowserbaseApply uses GROQ_API_KEY for groq/ and groq- Stagehand models', () => {
+  it('probeBrowserbaseApply uses GROQ_API_KEY for groq/ and groq- models in Stagehand mode', () => {
     process.env.BROWSERBASE_API_KEY = 'bb-key';
     process.env.BROWSERBASE_PROJECT_ID = 'proj-1';
+    process.env.BROWSERBASE_USE_STAGEHAND_AGENT = 'true';
     process.env.STAGEHAND_MODEL = 'groq/llama-3.3-70b-versatile';
     expect(probeBrowserbaseApply()).toBe(false);
     process.env.GROQ_API_KEY = 'gsk-test';

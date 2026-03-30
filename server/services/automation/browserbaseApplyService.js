@@ -123,9 +123,14 @@ export function isBrowserbaseApplyConfigured() {
   return Boolean(key && project);
 }
 
+export function isBrowserbaseStagehandEnabled() {
+  return String(process.env.BROWSERBASE_USE_STAGEHAND_AGENT || '').trim().toLowerCase() === 'true';
+}
+
 /** True when Browserbase env is set and the chosen model’s provider API key is present. */
 export function probeBrowserbaseApply() {
   if (!isBrowserbaseApplyConfigured()) return false;
+  if (!isBrowserbaseStagehandEnabled()) return true;
   const model = String(process.env.STAGEHAND_MODEL || 'openai/gpt-4o').trim();
   const envName = providerApiKeyEnvForModel(model);
   return Boolean(String(process.env[envName] || '').trim());
@@ -217,6 +222,223 @@ async function maybePushLiveFrame(page, applicationId) {
     setNovaActLiveFrame(id, buf, pageUrl);
   } catch {
     /* ignore */
+  }
+}
+
+function splitName(name = '') {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    first: parts[0] || '',
+    last: parts.length > 1 ? parts[parts.length - 1] : '',
+  };
+}
+
+async function fillFirstVisible(page, selectors, value) {
+  if (!value) return false;
+  for (const selector of selectors) {
+    const loc = page.locator(selector).first();
+    try {
+      if (!(await loc.count())) continue;
+      if (!(await loc.isVisible())) continue;
+      await loc.fill(String(value));
+      return true;
+    } catch {
+      /* keep trying */
+    }
+  }
+  return false;
+}
+
+async function clickFirstVisible(page, selectors) {
+  for (const selector of selectors) {
+    const loc = page.locator(selector).first();
+    try {
+      if (!(await loc.count())) continue;
+      if (!(await loc.isVisible())) continue;
+      await loc.click({ timeout: 10_000 });
+      return true;
+    } catch {
+      /* keep trying */
+    }
+  }
+  return false;
+}
+
+async function maybeUploadCv(page, cvAssets) {
+  const fileInput = page.locator('input[type="file"]').first();
+  if (!(await fileInput.count())) return false;
+  const files = [cvAssets?.pdfPath, cvAssets?.docxPath].filter(Boolean);
+  if (!files.length) return false;
+  try {
+    await fileInput.setInputFiles(files);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectApplySuccess(page) {
+  try {
+    const body = await page.evaluate(() => document?.body?.innerText || '');
+    const text = String(body || '').toLowerCase();
+    return (
+      /thank you for applying/.test(text) ||
+      /application submitted/.test(text) ||
+      /we received your application/.test(text) ||
+      /your application has been submitted/.test(text) ||
+      /successfully applied/.test(text)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function applyWithBrowserbasePlaywright(job, cvAssets, profile, _artifacts, options = {}) {
+  const {
+    knowledgePack,
+    sessionCookies = [],
+    liAtCookie,
+    onProgress,
+    onTrace,
+    onPendingHuman,
+    applicationId: appIdOpt,
+  } = options;
+
+  const applicationId = knowledgePack?.applicationId || appIdOpt || null;
+  const onLog = line => trace({ onProgress, onTrace }, applicationId, line);
+
+  if (!isBrowserbaseApplyConfigured()) {
+    return {
+      success: false,
+      status: 'failed',
+      message: 'Browserbase apply requires BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.',
+    };
+  }
+
+  let stagehand;
+  try {
+    let cvUrl = null;
+    try {
+      cvUrl = await presignCvPdf(cvAssets.pdfPath, applicationId, onLog);
+    } catch (e) {
+      onLog(`CV presign/upload skipped: ${e?.message || e}`);
+    }
+    const instruction = buildApplyInstruction(job, knowledgePack, profile, cvUrl);
+    setNovaActTaskPreview(applicationId, instruction);
+
+    const { Stagehand } = await import('@browserbasehq/stagehand');
+    stagehand = new Stagehand({
+      env: 'BROWSERBASE',
+      apiKey: process.env.BROWSERBASE_API_KEY,
+      projectId: process.env.BROWSERBASE_PROJECT_ID,
+      // Use Browserbase session orchestration only; core interactions are Playwright-native.
+      disableAPI: true,
+      verbose: Number(process.env.STAGEHAND_VERBOSE || 0),
+      logger: logLine => onLog(`[stagehand] ${logLine.category}: ${logLine.message}`),
+    });
+    await stagehand.init();
+
+    const sessionUrl = stagehand.browserbaseSessionURL;
+    const sessionId = stagehand.browserbaseSessionID;
+    if (sessionId) onLog(`Browserbase session ${sessionId}`);
+    if (sessionUrl) onLog(`Live session: ${sessionUrl}`);
+    setNovaActRunMeta(applicationId, {
+      workflowDefinitionName: null,
+      workflowRunId: null,
+      logGroupName: null,
+      consoleUrl: sessionUrl || null,
+      browserbaseSessionId: sessionId || null,
+    });
+
+    const context = stagehand.context;
+    await applyContextCookies(context, sessionCookies, liAtCookie, job.url);
+    const page = context.pages()[0];
+    if (!page) return { success: false, status: 'failed', message: 'No browser page after Browserbase session start.' };
+
+    await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+    await maybePushLiveFrame(page, applicationId);
+
+    onLog('Browserbase Playwright mode: starting deterministic apply flow');
+    const liveInterval = setInterval(() => {
+      void maybePushLiveFrame(page, applicationId);
+    }, Math.max(1500, Number(process.env.BROWSERBASE_LIVE_FRAME_MS || 2500)));
+
+    const { first, last } = splitName(profile?.name);
+    const coverText = String(knowledgePack?.tailoredCV || '').slice(0, 1800);
+    try {
+      await clickFirstVisible(page, [
+        'button:has-text("Apply")',
+        'a:has-text("Apply")',
+        'button:has-text("Easy Apply")',
+        'a:has-text("Easy Apply")',
+      ]);
+      await page.waitForTimeout(1200);
+
+      await fillFirstVisible(page, ['input[name*="first" i]', 'input[id*="first" i]'], first);
+      await fillFirstVisible(page, ['input[name*="last" i]', 'input[id*="last" i]'], last);
+      await fillFirstVisible(page, ['input[type="email"]', 'input[name*="email" i]'], profile?.email || '');
+      await fillFirstVisible(page, ['input[type="tel"]', 'input[name*="phone" i]'], profile?.phone || '');
+      await fillFirstVisible(
+        page,
+        ['textarea[name*="cover" i]', 'textarea[id*="cover" i]', 'textarea[placeholder*="cover" i]'],
+        coverText,
+      );
+
+      const uploaded = await maybeUploadCv(page, cvAssets);
+      if (uploaded) onLog('Uploaded CV via file input');
+
+      const pauseNeeded = await shouldPauseForHuman(page);
+      if (pauseNeeded && onPendingHuman) {
+        await onPendingHuman({ reason: `Human intervention likely required (url=${String(page.url()).slice(0, 140)}).` });
+      }
+
+      await clickFirstVisible(page, [
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'button:has-text("Review")',
+      ]);
+      await page.waitForTimeout(900);
+
+      await clickFirstVisible(page, [
+        'button:has-text("Submit Application")',
+        'button:has-text("Submit")',
+        'button:has-text("Apply")',
+      ]);
+      await page.waitForTimeout(1500);
+    } finally {
+      clearInterval(liveInterval);
+    }
+
+    await maybePushLiveFrame(page, applicationId);
+    const shotBuf = await page.screenshot({ type: 'png' }).catch(() => null);
+    const ok = await detectApplySuccess(page);
+    if (ok) {
+      onLog('Detected apply success confirmation in page text');
+      return {
+        success: true,
+        status: 'applied',
+        verified: true,
+        screenshot: shotBuf || undefined,
+        screenshots: shotBuf ? [{ label: 'Browserbase Playwright confirmation', buffer: shotBuf }] : [],
+        message: 'Application submitted successfully.',
+      };
+    }
+
+    onLog('Apply flow finished without a clear success confirmation');
+    return {
+      success: false,
+      status: 'failed',
+      verified: false,
+      screenshot: shotBuf || undefined,
+      screenshots: shotBuf ? [{ label: 'Browserbase Playwright last frame', buffer: shotBuf }] : [],
+      message: 'Could not confirm final submission; review the Browserbase session and complete manually if needed.',
+    };
+  } catch (e) {
+    const msg = e?.message || String(e);
+    onLog(`Fatal: ${msg}`);
+    return { success: false, status: 'failed', message: msg };
+  } finally {
+    if (stagehand) await stagehand.close().catch(() => {});
   }
 }
 

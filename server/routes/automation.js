@@ -2,7 +2,11 @@
  * Apply automation diagnostics (no secrets in responses).
  */
 import { Router } from 'express';
-import { isBrowserbaseApplyConfigured, probeBrowserbaseApply } from '../services/automation/browserbaseApplyService.js';
+import {
+  isBrowserbaseApplyConfigured,
+  isBrowserbaseStagehandEnabled,
+  probeBrowserbaseApply,
+} from '../services/automation/browserbaseApplyService.js';
 import { probeNovaActAws } from '../services/automation/novaActAwsService.js';
 
 const router = Router();
@@ -12,7 +16,11 @@ router.get('/api/automation/status', async (req, res, next) => {
     const bbEnv = isBrowserbaseApplyConfigured();
     const bbProbe = probeBrowserbaseApply();
     const novaReady = await probeNovaActAws();
-    const applyEngine = bbProbe ? 'browserbase-stagehand' : novaReady ? 'nova-act-aws' : 'none';
+    const applyEngine = bbProbe
+      ? (isBrowserbaseStagehandEnabled() ? 'browserbase-stagehand' : 'browserbase-playwright')
+      : novaReady
+        ? 'nova-act-aws'
+        : 'none';
 
     let browserbaseVerify = null;
     const wantVerify = String(req.query.verify || '') === '1';
@@ -41,6 +49,7 @@ router.get('/api/automation/status', async (req, res, next) => {
       browserbase: {
         envConfigured: bbEnv,
         readyForApply: bbProbe,
+        stagehandAgentEnabled: isBrowserbaseStagehandEnabled(),
         stagehandModel: String(process.env.STAGEHAND_MODEL || 'openai/gpt-4o').trim(),
         apiVerify: browserbaseVerify,
       },

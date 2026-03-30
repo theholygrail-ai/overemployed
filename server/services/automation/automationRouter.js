@@ -1,5 +1,6 @@
 /**
- * Apply automation: **Browserbase + Stagehand** when configured, else **Amazon Nova Act (AWS IAM)**.
+ * Apply automation: **Browserbase + Playwright** (default) or optional Stagehand agent mode,
+ * else **Amazon Nova Act (AWS IAM)**.
  *
  * @see https://docs.browserbase.com/introduction/playwright
  * @see https://docs.stagehand.dev/
@@ -11,14 +12,22 @@ export async function applyToJob(job, cvAssets, profile, artifacts, options = {}
   try {
     const {
       probeBrowserbaseApply,
+      isBrowserbaseStagehandEnabled,
+      applyWithBrowserbasePlaywright,
       applyWithBrowserbaseStagehand,
     } = await import('./browserbaseApplyService.js');
 
     if (probeBrowserbaseApply()) {
-      console.log(`[automationRouter] Browserbase + Stagehand for ${job.company} — ${job.title}`);
-      options.onProgress?.('Using Browserbase (cloud browser) + Stagehand agent');
-      const result = await applyWithBrowserbaseStagehand(job, cvAssets, profile, artifacts, options);
-      return { engine: 'browserbase-stagehand', ...result };
+      if (isBrowserbaseStagehandEnabled()) {
+        console.log(`[automationRouter] Browserbase + Stagehand for ${job.company} — ${job.title}`);
+        options.onProgress?.('Using Browserbase (cloud browser) + Stagehand agent');
+        const result = await applyWithBrowserbaseStagehand(job, cvAssets, profile, artifacts, options);
+        return { engine: 'browserbase-stagehand', ...result };
+      }
+      console.log(`[automationRouter] Browserbase + Playwright for ${job.company} — ${job.title}`);
+      options.onProgress?.('Using Browserbase (cloud browser) + Playwright form automation');
+      const result = await applyWithBrowserbasePlaywright(job, cvAssets, profile, artifacts, options);
+      return { engine: 'browserbase-playwright', ...result };
     }
 
     const { probeNovaActAws, applyWithNovaActAws } = await import('./novaActAwsService.js');
